@@ -17,14 +17,14 @@ The project aims to provide:
 
 ## Tech Stack
 
-| Component | Technology |
-|-----------|------------|
-| DNS Service | Go |
-| Management API | FastAPI |
-| Frontend | React + Vite |
-| Database | SQLite |
-| Deployment | systemd |
-| CI/CD | GitHub Actions |
+| Component      | Technology     |
+| -------------- | -------------- |
+| DNS Service    | Go             |
+| Management API | FastAPI        |
+| Frontend       | React + Vite   |
+| Database       | SQLite         |
+| Deployment     | systemd        |
+| CI/CD          | GitHub Actions |
 
 ## Repository Structure
 
