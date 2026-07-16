@@ -1,0 +1,11 @@
+{
+  "recommendations": [
+    "editorconfig.editorconfig",
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+    "golang.go",
+    "charliermarsh.ruff",
+    "ms-python.python",
+    "redhat.vscode-yaml"
+  ]
+}

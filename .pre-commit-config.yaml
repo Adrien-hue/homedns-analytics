@@ -1,0 +1,34 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-case-conflict
+      - id: check-json
+        exclude: '^frontend/tsconfig.*\.json$'
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: check-yaml
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args:
+          - --fix=lf
+      - id: trailing-whitespace
+        exclude: '\.md$'
+
+  - repo: local
+    hooks:
+      - id: frontend-prettier
+        name: frontend Prettier
+        entry: npm --prefix frontend run format:check
+        language: system
+        pass_filenames: false
+        files: '^frontend/'
+
+      - id: frontend-eslint
+        name: frontend ESLint
+        entry: npm --prefix frontend run lint
+        language: system
+        pass_filenames: false
+        files: '^frontend/'
