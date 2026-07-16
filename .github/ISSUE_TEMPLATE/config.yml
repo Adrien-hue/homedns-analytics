@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Project roadmap
+    url: https://github.com/YOUR_USERNAME/homedns-analytics/blob/main/ROADMAP.md
+    about: Review planned features and sprint sequencing before opening an issue.

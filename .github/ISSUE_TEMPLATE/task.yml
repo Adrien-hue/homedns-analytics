@@ -1,0 +1,52 @@
+name: Engineering task
+description: Track a technical, operational, or documentation task
+title: "chore: "
+labels:
+  - task
+body:
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective
+      description: State the result that this task must produce.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - DNS service
+        - Backend API
+        - Frontend
+        - Database
+        - Infrastructure
+        - CI/CD
+        - Documentation
+        - Repository
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: work
+    attributes:
+      label: Work required
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation
+      description: Explain how completion will be verified.
+      placeholder: |
+        Commands:
+        Expected result:
+    validations:
+      required: true
