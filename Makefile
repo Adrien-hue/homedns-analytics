@@ -30,3 +30,20 @@ ci: format-check lint test build ## Run all continuous-integration checks
 
 clean: ## Remove generated frontend files
 	rm -rf frontend/dist frontend/coverage
+
+# ==============================================================================
+# Benchmarks
+# ==============================================================================
+
+.PHONY: benchmark benchmark-full benchmark-baseline benchmark-help
+
+benchmark: benchmark-full
+
+benchmark-full:
+	./scripts/benchmarks/benchmark.sh full
+
+benchmark-baseline:
+	./scripts/benchmarks/benchmark.sh baseline
+
+benchmark-help:
+	./scripts/benchmarks/benchmark.sh help
