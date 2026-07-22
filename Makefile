@@ -47,3 +47,12 @@ benchmark-baseline:
 
 benchmark-help:
 	./scripts/benchmarks/benchmark.sh help
+
+# ==============================================================================
+# Release Package
+# ==============================================================================
+
+.PHONY: release-package
+
+release-package:
+	@./deploy/package-release.sh
