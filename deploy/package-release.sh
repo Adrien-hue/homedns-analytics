@@ -37,7 +37,7 @@ cp -R "${PROJECT_ROOT}/scripts/benchmarks/." \
 cat > "${STAGING_DIR}/RELEASE" <<EOF
 release_id=${RELEASE_ID}
 commit_sha=${COMMIT_SHA}
-created_at=$(date --iso-8601=seconds)
+created_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 EOF
 
 tar \
