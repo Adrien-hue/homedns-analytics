@@ -23,22 +23,14 @@ require_command() {
 }
 
 find_latest_archive() {
-  local archive
+  local archives=(/tmp/homedns-*.tar.gz)
 
-  archive="$(
-    find /tmp \
-      -maxdepth 1 \
-      -type f \
-      -name 'homedns-*.tar.gz' \
-      -print 2>/dev/null |
-      sort |
-      tail -n 1
-  )"
-
-  [[ -n "${archive}" && -f "${archive}" ]] ||
+  [[ -f "${archives[0]}" ]] ||
     fail "release archive was not created"
 
-  printf '%s\n' "${archive}"
+  printf '%s\n' "${archives[@]}" |
+    sort |
+    tail -n 1
 }
 
 cleanup_remote_installer() {
