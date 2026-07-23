@@ -58,6 +58,26 @@ prepare_layout() {
     "${INSTALL_ROOT}/shared/benchmarks"
 }
 
+migrate_existing_benchmarks() {
+  local current_link="${INSTALL_ROOT}/current"
+  local shared_benchmarks="${INSTALL_ROOT}/shared/benchmarks"
+
+  [[ -e "${current_link}" ]] || return 0
+
+  local current_release
+  current_release="$(readlink -f "${current_link}")"
+
+  local existing_benchmarks="${current_release}/benchmarks"
+
+  [[ -d "${existing_benchmarks}" ]] || return 0
+  [[ ! -L "${existing_benchmarks}" ]] || return 0
+
+  echo "Migrating existing benchmark history..."
+
+  cp -a "${existing_benchmarks}/." "${shared_benchmarks}/"
+  chown -R "${APP_USER}:${APP_GROUP}" "${shared_benchmarks}"
+}
+
 normalize_permissions() {
   local release_dir="$1"
 
@@ -72,10 +92,6 @@ configure_shared_benchmarks() {
   local release_dir="$1"
   local release_benchmarks="${release_dir}/benchmarks"
   local shared_benchmarks="${INSTALL_ROOT}/shared/benchmarks"
-
-  if [[ -d "${release_benchmarks}" && ! -L "${release_benchmarks}" ]]; then
-    cp -a "${release_benchmarks}/." "${shared_benchmarks}/"
-  fi
 
   rm -rf "${release_benchmarks}"
   ln -s "${shared_benchmarks}" "${release_benchmarks}"
@@ -120,6 +136,8 @@ main() {
     fail "application group does not exist: ${APP_GROUP}"
 
   prepare_layout
+
+  migrate_existing_benchmarks
 
   local release_dir="${INSTALL_ROOT}/releases/${release_id}"
 
