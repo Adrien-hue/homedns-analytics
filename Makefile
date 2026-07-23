@@ -1,5 +1,8 @@
 .DEFAULT_GOAL := help
 
+HOMEDNS_PI_HOST ?= homedns
+HOMEDNS_PI_USER ?= joyteaser
+
 .PHONY: help install lint format format-check test build ci pre-commit clean
 
 help: ## Display available commands
@@ -56,3 +59,22 @@ benchmark-help:
 
 release-package:
 	@./deploy/package-release.sh
+
+# ==============================================================================
+# Deploy Package
+# ==============================================================================
+
+.PHONY: deploy deploy-info
+
+deploy:
+	HOMEDNS_PI_HOST="$(HOMEDNS_PI_HOST)" \
+	HOMEDNS_PI_USER="$(HOMEDNS_PI_USER)" \
+	./deploy/deploy-release.sh
+
+deploy-info:
+	@echo "Target: $(HOMEDNS_PI_USER)@$(HOMEDNS_PI_HOST)"
+	@ssh "$(HOMEDNS_PI_USER)@$(HOMEDNS_PI_HOST)" \
+		'echo "Current release:" && \
+		readlink -f /opt/homedns/current && \
+		echo && \
+		cat /opt/homedns/current/RELEASE'

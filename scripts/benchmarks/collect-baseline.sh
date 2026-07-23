@@ -9,9 +9,10 @@ readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly PROJECT_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 readonly TIMESTAMP="$(date '+%Y-%m-%d_%H-%M-%S')"
 
-readonly BASELINE_ROOT="$PROJECT_ROOT/benchmarks/baseline"
-readonly RUNS_DIR="$BASELINE_ROOT/runs"
-readonly OUTPUT_DIR="$RUNS_DIR/$TIMESTAMP"
+readonly BENCHMARK_ROOT="${HOMEDNS_BENCHMARK_DIR:-${PROJECT_ROOT}/benchmarks}"
+readonly BASELINE_ROOT="${BENCHMARK_ROOT}/baseline"
+readonly RUNS_DIR="${BASELINE_ROOT}/runs"
+readonly OUTPUT_DIR="${RUNS_DIR}/${TIMESTAMP}"
 
 command_exists() {
     command -v "$1" >/dev/null 2>&1
