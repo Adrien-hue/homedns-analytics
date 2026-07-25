@@ -5,10 +5,21 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/Adrien-hue/homedns-analytics/dns/internal/config"
 	"github.com/Adrien-hue/homedns-analytics/dns/internal/version"
 )
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
+	configPath := flag.String(
+		"config",
+		"",
+		"path to the YAML configuration file",
+	)
+
 	showVersion := flag.Bool(
 		"version",
 		false,
@@ -19,13 +30,31 @@ func main() {
 
 	if *showVersion {
 		fmt.Println(version.String())
-		return
+		return 0
 	}
 
 	if flag.NArg() > 0 {
 		fmt.Fprintf(os.Stderr, "unexpected arguments: %v\n", flag.Args())
-		os.Exit(2)
+		return 2
 	}
 
-	fmt.Println("HomeDNS DNS service")
+	if *configPath == "" {
+		fmt.Fprintln(os.Stderr, "configuration path is required; use --config <path>")
+		return 2
+	}
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "load configuration: %v\n", err)
+		return 1
+	}
+
+	fmt.Printf(
+		"HomeDNS DNS configuration loaded: dns=%s upstream=%s health=%s\n",
+		cfg.DNSAddress(),
+		cfg.Upstream.Address,
+		cfg.HealthAddress(),
+	)
+
+	return 0
 }

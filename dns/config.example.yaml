@@ -1,0 +1,18 @@
+server:
+  listen_address: "127.0.0.1"
+  port: 5353
+
+upstream:
+  address: "1.1.1.1:53"
+  timeout: 3s
+
+health:
+  listen_address: "127.0.0.1"
+  port: 8081
+
+logging:
+  level: "info"
+  format: "json"
+
+shutdown:
+  timeout: 5s
