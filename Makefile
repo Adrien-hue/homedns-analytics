@@ -3,6 +3,14 @@
 DNS_DIR := dns
 DNS_BINARY := $(DNS_DIR)/bin/homedns-dns
 DNS_MAIN := ./cmd/homedns-dns
+DNS_VERSION ?= dev
+DNS_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+DNS_BUILD_TIME ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
+DNS_MODULE := github.com/Adrien-hue/homedns-analytics/dns
+DNS_LDFLAGS := \
+	-X '$(DNS_MODULE)/internal/version.Version=$(DNS_VERSION)' \
+	-X '$(DNS_MODULE)/internal/version.Commit=$(DNS_COMMIT)' \
+	-X '$(DNS_MODULE)/internal/version.BuildTime=$(DNS_BUILD_TIME)'
 
 HOMEDNS_PI_HOST ?= homedns
 HOMEDNS_PI_USER ?= joyteaser
@@ -63,8 +71,14 @@ dns-test: ## Run DNS service tests
 	cd $(DNS_DIR) && go test ./...
 
 dns-build: ## Build the DNS service
-	@mkdir -p $(DNS_DIR)/bin
-	cd $(DNS_DIR) && go build -o ../$(DNS_BINARY) $(DNS_MAIN)
+	cd "$(DNS_DIR)" && \
+		go build \
+			-ldflags "$(DNS_LDFLAGS)" \
+			-o "bin/homedns-dns" \
+			"$(DNS_MAIN)"
+
+dns-version:
+	cd "$(DNS_DIR)" && go run "$(DNS_MAIN)" --version
 
 dns-run: ## Run the DNS service locally
 	cd $(DNS_DIR) && go run $(DNS_MAIN)
