@@ -1,5 +1,9 @@
 .DEFAULT_GOAL := help
 
+DNS_DIR := dns
+DNS_BINARY := $(DNS_DIR)/bin/homedns-dns
+DNS_MAIN := ./cmd/homedns-dns
+
 HOMEDNS_PI_HOST ?= homedns
 HOMEDNS_PI_USER ?= joyteaser
 
@@ -8,22 +12,23 @@ HOMEDNS_PI_USER ?= joyteaser
 help: ## Display available commands
 	@awk 'BEGIN {FS = ":.*##"; printf "\nHomeDNS Analytics commands:\n\n"} /^[a-zA-Z_-]+:.*?##/ {printf "  %-16s %s\n", $$1, $$2} END {printf "\n"}' $(MAKEFILE_LIST)
 
-install: ## Install frontend dependencies
+install: ## Install project dependencies
 	npm --prefix frontend ci
+	cd $(DNS_DIR) && go mod download
 
-lint: ## Run project linters
+lint: dns-vet ## Run project linters
 	npm --prefix frontend run lint
 
-format: ## Format project files
+format: dns-format ## Format project files
 	npm --prefix frontend run format
 
-format-check: ## Check project formatting without modifying files
+format-check: dns-format-check ## Check project formatting without modifying files
 	npm --prefix frontend run format:check
 
-test: ## Run project tests
+test: dns-test ## Run project tests
 	npm --prefix frontend run test:run
 
-build: ## Build project components
+build: dns-build ## Build project components
 	npm --prefix frontend run build
 
 pre-commit: ## Run all pre-commit hooks
@@ -31,8 +36,43 @@ pre-commit: ## Run all pre-commit hooks
 
 ci: format-check lint test build ## Run all continuous-integration checks
 
-clean: ## Remove generated frontend files
+clean: dns-clean ## Remove generated project files
 	rm -rf frontend/dist frontend/coverage
+
+# ==============================================================================
+# DNS Service
+# ==============================================================================
+
+.PHONY: dns-format dns-format-check dns-vet dns-test dns-build dns-run dns-clean
+
+dns-format: ## Format DNS Go source files
+	cd $(DNS_DIR) && gofmt -w .
+
+dns-format-check: ## Check DNS Go source formatting
+	@files="$$(cd $(DNS_DIR) && gofmt -l .)"; \
+	if [ -n "$$files" ]; then \
+		echo "The following Go files need formatting:"; \
+		echo "$$files"; \
+		exit 1; \
+	fi
+
+dns-vet: ## Run static analysis on the DNS service
+	cd $(DNS_DIR) && go vet ./...
+
+dns-test: ## Run DNS service tests
+	cd $(DNS_DIR) && go test ./...
+
+dns-build: ## Build the DNS service
+	@mkdir -p $(DNS_DIR)/bin
+	cd $(DNS_DIR) && go build -o ../$(DNS_BINARY) $(DNS_MAIN)
+
+dns-run: ## Run the DNS service locally
+	cd $(DNS_DIR) && go run $(DNS_MAIN)
+
+dns-clean: ## Remove generated DNS files
+	@test -n "$(DNS_DIR)"
+	@test "$(DNS_DIR)" = "dns"
+	rm -rf "$(DNS_DIR)/bin"
 
 # ==============================================================================
 # Benchmarks
