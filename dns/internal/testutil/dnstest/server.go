@@ -11,13 +11,14 @@ import (
 )
 
 const (
-	ExampleDomain  = "example.test."
-	AliasDomain    = "alias.test."
-	MailDomain     = "mail.test."
-	MailHost       = "mailhost.test."
-	SlowDomain     = "slow.test."
-	ServfailDomain = "servfail.test."
-	NXDomain       = "nxdomain.test."
+	ExampleDomain   = "example.test."
+	AliasDomain     = "alias.test."
+	MailDomain      = "mail.test."
+	MailHost        = "mailhost.test."
+	SlowDomain      = "slow.test."
+	ServfailDomain  = "servfail.test."
+	NXDomain        = "nxdomain.test."
+	TruncatedDomain = "truncated.test."
 
 	ExampleIPv4 = "192.0.2.10"
 	ExampleIPv6 = "2001:db8::10"
@@ -166,6 +167,9 @@ func handleRequest(writer dns.ResponseWriter, request *dns.Msg) {
 	case NXDomain:
 		response.Rcode = dns.RcodeNameError
 
+	case TruncatedDomain:
+		addTruncatedAnswer(writer, response, question)
+
 	default:
 		response.Rcode = dns.RcodeNameError
 	}
@@ -268,6 +272,32 @@ func addSlowAnswer(response *dns.Msg, question dns.Question) {
 	response.Answer = append(response.Answer, &dns.A{
 		Hdr: dns.RR_Header{
 			Name:   SlowDomain,
+			Rrtype: dns.TypeA,
+			Class:  dns.ClassINET,
+			Ttl:    60,
+		},
+		A: net.ParseIP(ExampleIPv4),
+	})
+}
+
+func addTruncatedAnswer(
+	writer dns.ResponseWriter,
+	response *dns.Msg,
+	question dns.Question,
+) {
+	if question.Qtype != dns.TypeA {
+		return
+	}
+
+	if _, isUDP := writer.RemoteAddr().(*net.UDPAddr); isUDP {
+		response.Truncated = true
+
+		return
+	}
+
+	response.Answer = append(response.Answer, &dns.A{
+		Hdr: dns.RR_Header{
+			Name:   TruncatedDomain,
 			Rrtype: dns.TypeA,
 			Class:  dns.ClassINET,
 			Ttl:    60,
