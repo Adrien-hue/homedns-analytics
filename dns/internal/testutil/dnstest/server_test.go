@@ -194,11 +194,111 @@ func TestServerUsesSamePortForUDPAndTCP(t *testing.T) {
 	)
 
 	if udpResponse.Rcode != dns.RcodeSuccess {
-		t.Errorf("UDP response code = %d, want success", udpResponse.Rcode)
+		t.Errorf(
+			"UDP response code = %d, want success",
+			udpResponse.Rcode,
+		)
 	}
 
 	if tcpResponse.Rcode != dns.RcodeSuccess {
-		t.Errorf("TCP response code = %d, want success", tcpResponse.Rcode)
+		t.Errorf(
+			"TCP response code = %d, want success",
+			tcpResponse.Rcode,
+		)
+	}
+}
+
+func TestServerReturnsTruncatedResponseOverUDP(t *testing.T) {
+	server := Start(t)
+
+	response := exchange(
+		t,
+		server.Address(),
+		"udp",
+		TruncatedDomain,
+		dns.TypeA,
+	)
+
+	if response.Rcode != dns.RcodeSuccess {
+		t.Fatalf(
+			"response code = %s, want %s",
+			dns.RcodeToString[response.Rcode],
+			dns.RcodeToString[dns.RcodeSuccess],
+		)
+	}
+
+	if !response.Truncated {
+		t.Error("response truncated flag = false, want true")
+	}
+
+	if len(response.Answer) != 0 {
+		t.Errorf(
+			"answer count = %d, want 0 for truncated UDP response",
+			len(response.Answer),
+		)
+	}
+}
+
+func TestServerReturnsCompleteTruncatedDomainAnswerOverTCP(t *testing.T) {
+	server := Start(t)
+
+	response := exchange(
+		t,
+		server.Address(),
+		"tcp",
+		TruncatedDomain,
+		dns.TypeA,
+	)
+
+	if response.Rcode != dns.RcodeSuccess {
+		t.Fatalf(
+			"response code = %s, want %s",
+			dns.RcodeToString[response.Rcode],
+			dns.RcodeToString[dns.RcodeSuccess],
+		)
+	}
+
+	if response.Truncated {
+		t.Error("response truncated flag = true, want false")
+	}
+
+	if len(response.Answer) != 1 {
+		t.Fatalf(
+			"answer count = %d, want 1",
+			len(response.Answer),
+		)
+	}
+
+	record, ok := response.Answer[0].(*dns.A)
+	if !ok {
+		t.Fatalf(
+			"answer type = %T, want *dns.A",
+			response.Answer[0],
+		)
+	}
+
+	if got := record.A.String(); got != ExampleIPv4 {
+		t.Errorf(
+			"A address = %q, want %q",
+			got,
+			ExampleIPv4,
+		)
+	}
+}
+
+func TestServerAddressIsLoopback(t *testing.T) {
+	server := Start(t)
+
+	host, _, err := net.SplitHostPort(server.Address())
+	if err != nil {
+		t.Fatalf("parse server address: %v", err)
+	}
+
+	if !net.ParseIP(host).IsLoopback() {
+		t.Errorf(
+			"server host = %q, want loopback address",
+			host,
+		)
 	}
 }
 
@@ -231,17 +331,4 @@ func exchange(
 	}
 
 	return response
-}
-
-func TestServerAddressIsLoopback(t *testing.T) {
-	server := Start(t)
-
-	host, _, err := net.SplitHostPort(server.Address())
-	if err != nil {
-		t.Fatalf("parse server address: %v", err)
-	}
-
-	if !net.ParseIP(host).IsLoopback() {
-		t.Errorf("server host = %q, want loopback address", host)
-	}
 }
