@@ -9,9 +9,11 @@ import (
 )
 
 const (
-	NetworkUDP = "udp"
-	NetworkTCP = "tcp"
+	NetworkUDP Network = "udp"
+	NetworkTCP Network = "tcp"
 )
+
+type Network string
 
 type Client struct {
 	address string
@@ -28,49 +30,53 @@ func NewClient(address string, timeout time.Duration) *Client {
 func (c *Client) Exchange(
 	ctx context.Context,
 	request *dns.Msg,
-	network string,
+	network Network,
 ) (*dns.Msg, time.Duration, error) {
-	startedAt := time.Now()
-
 	if request == nil {
-		return nil, time.Since(startedAt), ErrNilRequest
+		return nil, 0, ErrNilRequest
 	}
 
-	if network != NetworkUDP && network != NetworkTCP {
-		return nil, time.Since(startedAt), fmt.Errorf(
-			"%w: %q",
+	switch network {
+	case NetworkUDP, NetworkTCP:
+		// Supported network.
+	default:
+		return nil, 0, fmt.Errorf(
+			"%w: %s",
 			ErrUnsupportedNetwork,
 			network,
 		)
 	}
 
+	start := time.Now()
+
 	response, err := c.exchange(ctx, request, network)
+	duration := time.Since(start)
 
 	if err != nil {
-		return nil, time.Since(startedAt), err
+		return nil, duration, err
 	}
 
 	if network == NetworkUDP && response.Truncated {
+		start = time.Now()
+
 		response, err = c.exchange(ctx, request, NetworkTCP)
+		duration += time.Since(start)
 
 		if err != nil {
-			return nil, time.Since(startedAt), fmt.Errorf(
-				"retry truncated upstream response over TCP : %w",
-				err,
-			)
+			return nil, duration, err
 		}
 	}
 
-	return response, time.Since(startedAt), nil
+	return response, duration, nil
 }
 
 func (c *Client) exchange(
 	ctx context.Context,
 	request *dns.Msg,
-	network string,
+	network Network,
 ) (*dns.Msg, error) {
 	client := &dns.Client{
-		Net:     network,
+		Net:     string(network),
 		Timeout: c.timeout,
 	}
 
