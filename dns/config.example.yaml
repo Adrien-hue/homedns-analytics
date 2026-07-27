@@ -1,6 +1,6 @@
 server:
   listen_address: "127.0.0.1"
-  port: 5353
+  port: 5300
 
 upstream:
   address: "1.1.1.1:53"
