@@ -68,7 +68,12 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: dns/go.mod
-          cache-dependency-path: dns/go.mod
+          cache-dependency-path: |
+            dns/go.mod
+            dns/go.sum
+
+      - name: Download dependencies
+        run: go mod download
 
       - name: Check formatting
         run: |
@@ -85,5 +90,31 @@ jobs:
       - name: Run tests
         run: go test ./...
 
+      - name: Run race detector
+        run: go test -race ./...
+
       - name: Build DNS service
-        run: go build -o bin/homedns-dns ./cmd/homedns-dns
+        run: |
+          mkdir -p bin
+          go build \
+            -trimpath \
+            -o bin/homedns-dns \
+            ./cmd/homedns-dns
+
+      - name: Build Linux ARM64 DNS service
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: arm64
+        run: |
+          mkdir -p bin
+          go build \
+            -trimpath \
+            -o bin/homedns-dns-linux-arm64 \
+            ./cmd/homedns-dns
+
+      - name: Inspect build artifacts
+        run: |
+          ls -lh bin
+          file bin/homedns-dns
+          file bin/homedns-dns-linux-arm64
