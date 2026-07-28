@@ -20,6 +20,7 @@ type exchangeFunc func(
 
 // Runner executes DNS benchmark paths.
 type Runner struct {
+	protocol string
 	exchange exchangeFunc
 }
 
@@ -47,6 +48,7 @@ func NewRunner(
 	}
 
 	return &Runner{
+		protocol: protocol,
 		exchange: client.ExchangeContext,
 	}, nil
 }
@@ -65,6 +67,14 @@ func (r *Runner) RunPath(
 	if ctx == nil {
 		return PathResult{}, errors.New(
 			"benchmark context is required",
+		)
+	}
+
+	if r.protocol != "" && r.protocol != config.Protocol {
+		return PathResult{}, fmt.Errorf(
+			"runner protocol %q does not match path protocol %q",
+			r.protocol,
+			config.Protocol,
 		)
 	}
 
