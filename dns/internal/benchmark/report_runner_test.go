@@ -46,7 +46,7 @@ func validReportRunConfig() ReportRunConfig {
 			Version:   "v0.2.0",
 			GitCommit: "abc123",
 			GitBranch: "feature/dns-benchmark",
-			Dirty:     true,
+			Dirty:     boolPointer(true),
 		},
 		Environment: Environment{
 			Hostname:        "homedns",
@@ -677,4 +677,8 @@ func TestQueryTypeName(t *testing.T) {
 			}
 		})
 	}
+}
+
+func boolPointer(value bool) *bool {
+	return &value
 }

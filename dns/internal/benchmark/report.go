@@ -40,7 +40,7 @@ type ProjectMetadata struct {
 	Version   string `json:"version"`
 	GitCommit string `json:"git_commit"`
 	GitBranch string `json:"git_branch"`
-	Dirty     bool   `json:"dirty"`
+	Dirty     *bool  `json:"dirty"`
 }
 
 type Environment struct {
