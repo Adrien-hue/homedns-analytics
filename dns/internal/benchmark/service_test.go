@@ -55,11 +55,20 @@ func validServiceConfig() ServiceConfig {
 
 	return ServiceConfig{
 		OutputDirectory: "benchmarks/runs",
-		Suite:           reportConfig.Suite,
-		Project:         reportConfig.Project,
-		Environment:     reportConfig.Environment,
-		Resources:       reportConfig.Resources,
-		HealthAddress:   reportConfig.HealthAddress,
+
+		Suite: reportConfig.Suite,
+
+		BenchmarkBinary: reportConfig.BenchmarkBinary,
+
+		TargetService: reportConfig.TargetService,
+
+		Environment: reportConfig.Environment,
+
+		Resources: reportConfig.Resources,
+
+		HealthAddress: reportConfig.HealthAddress,
+
+		StatusThresholds: reportConfig.StatusThresholds,
 	}
 }
 
@@ -122,9 +131,10 @@ func TestServiceRun(t *testing.T) {
 
 	runConfig := reportRunner.configs[0]
 
-	if runConfig.ID != "benchmark-20260728-183422" {
+	if runConfig.ID !=
+		"benchmark-20260728-183422" {
 		t.Fatalf(
-			"unexpected benchmark ID: %q",
+			"unexpected benchmark ID: got %q",
 			runConfig.ID,
 		)
 	}
@@ -132,36 +142,66 @@ func TestServiceRun(t *testing.T) {
 	if runConfig.Suite.DirectAddress !=
 		config.Suite.DirectAddress {
 		t.Fatalf(
-			"unexpected direct address: %q",
+			"unexpected direct address: got %q, want %q",
 			runConfig.Suite.DirectAddress,
+			config.Suite.DirectAddress,
 		)
 	}
 
 	if runConfig.Suite.ForwardedAddress !=
 		config.Suite.ForwardedAddress {
 		t.Fatalf(
-			"unexpected forwarded address: %q",
+			"unexpected forwarded address: got %q, want %q",
 			runConfig.Suite.ForwardedAddress,
+			config.Suite.ForwardedAddress,
 		)
 	}
 
-	if runConfig.Project != config.Project {
+	if runConfig.BenchmarkBinary !=
+		config.BenchmarkBinary {
 		t.Fatal(
-			"project metadata was not forwarded",
+			"benchmark binary metadata was not forwarded",
 		)
 	}
 
-	if runConfig.Environment != config.Environment {
+	if runConfig.TargetService !=
+		config.TargetService {
+		t.Fatal(
+			"target service metadata was not forwarded",
+		)
+	}
+
+	if runConfig.Environment !=
+		config.Environment {
 		t.Fatal(
 			"environment metadata was not forwarded",
+		)
+	}
+
+	if runConfig.Resources.
+		Sampling.
+		IntervalMilliseconds !=
+		config.Resources.
+			Sampling.
+			IntervalMilliseconds {
+		t.Fatal(
+			"resource metadata was not forwarded",
 		)
 	}
 
 	if runConfig.HealthAddress !=
 		config.HealthAddress {
 		t.Fatalf(
-			"unexpected health address: %q",
+			"unexpected health address: got %q, want %q",
 			runConfig.HealthAddress,
+			config.HealthAddress,
+		)
+	}
+
+	if runConfig.StatusThresholds !=
+		config.StatusThresholds {
+		t.Fatal(
+			"status thresholds were not forwarded",
 		)
 	}
 
@@ -194,15 +234,23 @@ func TestServiceRun(t *testing.T) {
 		)
 	}
 
-	if reportWriter.reports[0].Benchmark.ID !=
-		expectedReport.Benchmark.ID {
+	if len(reportWriter.reports) != 1 {
+		t.Fatalf(
+			"unexpected written report count: got %d, want %d",
+			len(reportWriter.reports),
+			1,
+		)
+	}
+
+	if reportWriter.reports[0].Report.ID !=
+		expectedReport.Report.ID {
 		t.Fatal(
 			"unexpected report passed to writer",
 		)
 	}
 
-	if result.Report.Benchmark.ID !=
-		expectedReport.Benchmark.ID {
+	if result.Report.Report.ID !=
+		expectedReport.Report.ID {
 		t.Fatal(
 			"unexpected report returned by service",
 		)
@@ -317,6 +365,18 @@ func TestServiceRejectsInvalidConfiguration(
 				config.Suite.QueryCount = 0
 			},
 		},
+		{
+			name: "invalid status thresholds",
+			mutate: func(config *ServiceConfig) {
+				config.StatusThresholds =
+					StatusThresholds{
+						DegradedFailurePercent: 10,
+						FailedFailurePercent:   5,
+						DegradedTimeoutPercent: 1,
+						FailedTimeoutPercent:   5,
+					}
+			},
+		},
 	}
 
 	for _, test := range tests {
@@ -330,12 +390,14 @@ func TestServiceRejectsInvalidConfiguration(
 
 			service := &Service{
 				reportRunner: &recordedReportRunner{},
+
 				writeReport: func(
 					string,
 					Report,
 				) error {
 					return nil
 				},
+
 				now: time.Now,
 			}
 
@@ -349,6 +411,35 @@ func TestServiceRejectsInvalidConfiguration(
 				)
 			}
 		})
+	}
+}
+
+func TestServiceRejectsNilContext(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	service := &Service{
+		reportRunner: &recordedReportRunner{},
+
+		writeReport: func(
+			string,
+			Report,
+		) error {
+			return nil
+		},
+
+		now: time.Now,
+	}
+
+	_, err := service.Run(
+		nil,
+		validServiceConfig(),
+	)
+	if err == nil {
+		t.Fatal(
+			"expected nil context to fail",
+		)
 	}
 }
 
@@ -451,7 +542,6 @@ func TestBenchmarkIDFromTime(t *testing.T) {
 	)
 
 	got := benchmarkIDFromTime(value)
-
 	want := "benchmark-20260728-201530"
 
 	if got != want {

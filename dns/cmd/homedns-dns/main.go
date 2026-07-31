@@ -235,22 +235,22 @@ func runBenchmark(
 	fmt.Fprintf(
 		stdout,
 		"Requests: %d\n",
-		result.Report.Summary.RequestsTotal,
+		result.Report.Summary.Requests.Attempted,
 	)
 	fmt.Fprintf(
 		stdout,
 		"Successful: %d\n",
-		result.Report.Summary.SuccessfulTotal,
+		result.Report.Summary.Requests.Successful,
 	)
 	fmt.Fprintf(
 		stdout,
 		"Failed: %d\n",
-		result.Report.Summary.FailedTotal,
+		result.Report.Summary.Requests.Failed,
 	)
 	fmt.Fprintf(
 		stdout,
 		"Timeouts: %d\n",
-		result.Report.Summary.TimeoutsTotal,
+		result.Report.Summary.Requests.Timeouts,
 	)
 	fmt.Fprintln(stdout)
 	fmt.Fprintf(

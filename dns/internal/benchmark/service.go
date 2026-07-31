@@ -16,11 +16,14 @@ type ServiceConfig struct {
 
 	Suite SuiteConfig
 
-	Project     ProjectMetadata
-	Environment Environment
-	Resources   ResourceSummary
+	BenchmarkBinary BenchmarkBinaryMetadata
+	TargetService   TargetServiceMetadata
+	Environment     Environment
+	Resources       ResourceSummary
 
 	HealthAddress string
+
+	StatusThresholds StatusThresholds
 }
 
 // Validate verifies the benchmark service configuration.
@@ -34,6 +37,17 @@ func (c ServiceConfig) Validate() error {
 	if err := c.Suite.Validate(); err != nil {
 		return fmt.Errorf(
 			"invalid benchmark suite configuration: %w",
+			err,
+		)
+	}
+
+	if err := validateStatusThresholds(
+		resolvedStatusThresholds(
+			c.StatusThresholds,
+		),
+	); err != nil {
+		return fmt.Errorf(
+			"invalid benchmark status thresholds: %w",
 			err,
 		)
 	}
@@ -104,6 +118,12 @@ func (s *Service) Run(
 		)
 	}
 
+	if ctx == nil {
+		return ServiceResult{}, errors.New(
+			"benchmark context is required",
+		)
+	}
+
 	if err := config.Validate(); err != nil {
 		return ServiceResult{}, fmt.Errorf(
 			"validate benchmark service configuration: %w",
@@ -118,12 +138,21 @@ func (s *Service) Run(
 	report, err := s.reportRunner.Run(
 		ctx,
 		ReportRunConfig{
-			ID:            benchmarkID,
-			Suite:         config.Suite,
-			Project:       config.Project,
-			Environment:   config.Environment,
-			Resources:     config.Resources,
+			ID: benchmarkID,
+
+			Suite: config.Suite,
+
+			BenchmarkBinary: config.BenchmarkBinary,
+
+			TargetService: config.TargetService,
+
+			Environment: config.Environment,
+
+			Resources: config.Resources,
+
 			HealthAddress: config.HealthAddress,
+
+			StatusThresholds: config.StatusThresholds,
 		},
 	)
 	if err != nil {

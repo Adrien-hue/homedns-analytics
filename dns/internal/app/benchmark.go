@@ -27,7 +27,8 @@ func RunBenchmark(
 	}
 
 	if outputDirectory == "" {
-		outputDirectory = defaultBenchmarkOutputDirectory
+		outputDirectory =
+			defaultBenchmarkOutputDirectory
 	}
 
 	suite := benchmark.DefaultSuiteConfig(
@@ -40,7 +41,10 @@ func RunBenchmark(
 	hostname, err := os.Hostname()
 	if err != nil {
 		return benchmark.ServiceResult{},
-			fmt.Errorf("read benchmark hostname: %w", err)
+			fmt.Errorf(
+				"read benchmark hostname: %w",
+				err,
+			)
 	}
 
 	service := benchmark.NewService()
@@ -49,25 +53,43 @@ func RunBenchmark(
 		ctx,
 		benchmark.ServiceConfig{
 			OutputDirectory: outputDirectory,
-			Suite:           suite,
-			Project: benchmark.ProjectMetadata{
-				Name:      "homedns-analytics",
-				Version:   version.Version,
-				GitCommit: version.Commit,
+
+			Suite: suite,
+
+			BenchmarkBinary: benchmark.BenchmarkBinaryMetadata{
+				Project:   "homedns-analytics",
+				Component: "homedns-dns",
+
+				Version:        version.Version,
+				GitCommit:      version.Commit,
+				GoVersion:      runtime.Version(),
+				BuildTimestamp: version.BuildTime,
 			},
+
+			TargetService: benchmark.TargetServiceMetadata{
+				Address:       cfg.DNSAddress(),
+				HealthAddress: cfg.HealthAddress(),
+			},
+
 			Environment: benchmark.Environment{
-				Hostname:        hostname,
+				Hostname: hostname,
+
 				OperatingSystem: runtime.GOOS,
-				Architecture:    runtime.GOARCH,
-				LogicalCPUs:     runtime.NumCPU(),
-				GoVersion:       runtime.Version(),
+
+				Architecture: runtime.GOARCH,
+
+				LogicalCPUs: runtime.NumCPU(),
 			},
+
 			HealthAddress: cfg.HealthAddress(),
 		},
 	)
 	if err != nil {
 		return benchmark.ServiceResult{},
-			fmt.Errorf("run DNS benchmark: %w", err)
+			fmt.Errorf(
+				"run DNS benchmark: %w",
+				err,
+			)
 	}
 
 	return result, nil

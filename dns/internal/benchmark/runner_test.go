@@ -52,50 +52,78 @@ func TestRunnerRunPath(t *testing.T) {
 		t.Fatalf("run benchmark path: %v", err)
 	}
 
-	if result.Requests != 4 {
+	assertRequestCounts(
+		t,
+		result.Requests,
+		RequestCounts{
+			Attempted:  4,
+			Successful: 4,
+		},
+	)
+
+	assertRequestRates(
+		t,
+		result.Rates,
+		RequestRates{
+			SuccessPercent: 100,
+		},
+	)
+
+	assertFailureBreakdown(
+		t,
+		result.Failures,
+		FailureBreakdown{},
+	)
+
+	if result.DurationMilliseconds <= 0 {
 		t.Fatalf(
-			"unexpected request count: got %d, want %d",
-			result.Requests,
+			"expected positive duration, got %f",
+			result.DurationMilliseconds,
+		)
+	}
+
+	if result.Throughput.AttemptedQueriesPerSecond <= 0 {
+		t.Fatalf(
+			"expected positive attempted QPS, got %f",
+			result.Throughput.AttemptedQueriesPerSecond,
+		)
+	}
+
+	if result.Throughput.SuccessfulQueriesPerSecond <= 0 {
+		t.Fatalf(
+			"expected positive successful QPS, got %f",
+			result.Throughput.SuccessfulQueriesPerSecond,
+		)
+	}
+
+	if result.Throughput.AttemptedQueriesPerSecond !=
+		result.Throughput.SuccessfulQueriesPerSecond {
+		t.Fatalf(
+			"expected equal attempted and successful QPS: attempted=%f successful=%f",
+			result.Throughput.AttemptedQueriesPerSecond,
+			result.Throughput.SuccessfulQueriesPerSecond,
+		)
+	}
+
+	latency := result.SuccessfulRequestLatencyMilliseconds
+
+	if latency.SampleCount != 4 {
+		t.Fatalf(
+			"unexpected latency sample count: got %d, want %d",
+			latency.SampleCount,
 			4,
 		)
 	}
 
-	if result.Successful != 4 {
+	if latency.Minimum != 2 ||
+		latency.Mean != 2 ||
+		latency.Median != 2 ||
+		latency.P95 != 2 ||
+		latency.P99 != 2 ||
+		latency.Maximum != 2 {
 		t.Fatalf(
-			"unexpected successful count: got %d, want %d",
-			result.Successful,
-			4,
-		)
-	}
-
-	if result.Failed != 0 {
-		t.Fatalf(
-			"unexpected failed count: got %d, want %d",
-			result.Failed,
-			0,
-		)
-	}
-
-	if result.Timeouts != 0 {
-		t.Fatalf(
-			"unexpected timeout count: got %d, want %d",
-			result.Timeouts,
-			0,
-		)
-	}
-
-	if result.LatencyMilliseconds.Mean != 2 {
-		t.Fatalf(
-			"unexpected mean latency: got %f, want %f",
-			result.LatencyMilliseconds.Mean,
-			2.0,
-		)
-	}
-
-	if result.QueriesPerSecond <= 0 {
-		t.Fatalf(
-			"expected positive QPS, got %f",
-			result.QueriesPerSecond,
+			"unexpected latency statistics: %+v",
+			latency,
 		)
 	}
 
@@ -109,9 +137,31 @@ func TestRunnerRunPath(t *testing.T) {
 			4,
 		)
 	}
+
+	nameCounts := make(map[string]int)
+
+	for _, name := range receivedNames {
+		nameCounts[name]++
+	}
+
+	if nameCounts["example.com."] != 2 {
+		t.Fatalf(
+			"unexpected example.com query count: got %d, want %d",
+			nameCounts["example.com."],
+			2,
+		)
+	}
+
+	if nameCounts["cloudflare.com."] != 2 {
+		t.Fatalf(
+			"unexpected cloudflare.com query count: got %d, want %d",
+			nameCounts["cloudflare.com."],
+			2,
+		)
+	}
 }
 
-func TestRunnerRunPathRecordsFailures(t *testing.T) {
+func TestRunnerRunPathRecordsOtherFailures(t *testing.T) {
 	t.Parallel()
 
 	var requestNumber int
@@ -153,27 +203,48 @@ func TestRunnerRunPathRecordsFailures(t *testing.T) {
 		t.Fatalf("run benchmark path: %v", err)
 	}
 
-	if result.Successful != 1 {
+	assertRequestCounts(
+		t,
+		result.Requests,
+		RequestCounts{
+			Attempted:          2,
+			Successful:         1,
+			Failed:             1,
+			NonTimeoutFailures: 1,
+		},
+	)
+
+	assertRequestRates(
+		t,
+		result.Rates,
+		RequestRates{
+			SuccessPercent: 50,
+			FailurePercent: 50,
+		},
+	)
+
+	assertFailureBreakdown(
+		t,
+		result.Failures,
+		FailureBreakdown{
+			Other: 1,
+		},
+	)
+
+	if result.SuccessfulRequestLatencyMilliseconds.SampleCount != 1 {
 		t.Fatalf(
-			"unexpected successful count: got %d, want %d",
-			result.Successful,
+			"unexpected latency sample count: got %d, want %d",
+			result.SuccessfulRequestLatencyMilliseconds.SampleCount,
 			1,
 		)
 	}
 
-	if result.Failed != 1 {
+	if result.Throughput.AttemptedQueriesPerSecond <=
+		result.Throughput.SuccessfulQueriesPerSecond {
 		t.Fatalf(
-			"unexpected failed count: got %d, want %d",
-			result.Failed,
-			1,
-		)
-	}
-
-	if result.Timeouts != 0 {
-		t.Fatalf(
-			"unexpected timeout count: got %d, want %d",
-			result.Timeouts,
-			0,
+			"expected attempted QPS to exceed successful QPS: attempted=%f successful=%f",
+			result.Throughput.AttemptedQueriesPerSecond,
+			result.Throughput.SuccessfulQueriesPerSecond,
 		)
 	}
 }
@@ -203,28 +274,529 @@ func TestRunnerRunPathRecordsTimeouts(t *testing.T) {
 		t.Fatalf("run benchmark path: %v", err)
 	}
 
-	if result.Successful != 0 {
+	assertRequestCounts(
+		t,
+		result.Requests,
+		RequestCounts{
+			Attempted: 3,
+			Failed:    3,
+			Timeouts:  3,
+		},
+	)
+
+	assertRequestRates(
+		t,
+		result.Rates,
+		RequestRates{
+			FailurePercent: 100,
+			TimeoutPercent: 100,
+		},
+	)
+
+	assertFailureBreakdown(
+		t,
+		result.Failures,
+		FailureBreakdown{
+			Timeout: 3,
+		},
+	)
+
+	if result.SuccessfulRequestLatencyMilliseconds.SampleCount != 0 {
 		t.Fatalf(
-			"unexpected successful count: got %d, want %d",
-			result.Successful,
-			0,
+			"expected no latency samples, got %d",
+			result.SuccessfulRequestLatencyMilliseconds.SampleCount,
 		)
 	}
 
-	if result.Failed != 3 {
+	if result.Throughput.AttemptedQueriesPerSecond <= 0 {
 		t.Fatalf(
-			"unexpected failed count: got %d, want %d",
-			result.Failed,
-			3,
+			"expected positive attempted QPS, got %f",
+			result.Throughput.AttemptedQueriesPerSecond,
 		)
 	}
 
-	if result.Timeouts != 3 {
+	if result.Throughput.SuccessfulQueriesPerSecond != 0 {
 		t.Fatalf(
-			"unexpected timeout count: got %d, want %d",
-			result.Timeouts,
-			3,
+			"expected zero successful QPS, got %f",
+			result.Throughput.SuccessfulQueriesPerSecond,
 		)
+	}
+}
+
+func TestRunnerRunPathRecordsNetworkFailures(t *testing.T) {
+	t.Parallel()
+
+	runner := &Runner{
+		exchange: func(
+			_ context.Context,
+			_ *dns.Msg,
+			_ string,
+		) (*dns.Msg, time.Duration, error) {
+			return nil, 0, testNetworkError{
+				message: "network unavailable",
+			}
+		},
+	}
+
+	config := validPathConfig()
+	config.QueryCount = 2
+	config.Concurrency = 1
+
+	result, err := runner.RunPath(
+		context.Background(),
+		config,
+	)
+	if err != nil {
+		t.Fatalf("run benchmark path: %v", err)
+	}
+
+	assertRequestCounts(
+		t,
+		result.Requests,
+		RequestCounts{
+			Attempted:          2,
+			Failed:             2,
+			NonTimeoutFailures: 2,
+		},
+	)
+
+	assertFailureBreakdown(
+		t,
+		result.Failures,
+		FailureBreakdown{
+			Network: 2,
+		},
+	)
+}
+
+func TestRunnerRunPathRecordsNetworkTimeouts(t *testing.T) {
+	t.Parallel()
+
+	runner := &Runner{
+		exchange: func(
+			_ context.Context,
+			_ *dns.Msg,
+			_ string,
+		) (*dns.Msg, time.Duration, error) {
+			return nil, 0, testNetworkError{
+				message: "network timeout",
+				timeout: true,
+			}
+		},
+	}
+
+	config := validPathConfig()
+	config.QueryCount = 2
+	config.Concurrency = 1
+
+	result, err := runner.RunPath(
+		context.Background(),
+		config,
+	)
+	if err != nil {
+		t.Fatalf("run benchmark path: %v", err)
+	}
+
+	assertRequestCounts(
+		t,
+		result.Requests,
+		RequestCounts{
+			Attempted: 2,
+			Failed:    2,
+			Timeouts:  2,
+		},
+	)
+
+	assertFailureBreakdown(
+		t,
+		result.Failures,
+		FailureBreakdown{
+			Timeout: 2,
+		},
+	)
+}
+
+func TestRunnerRunPathRecordsDNSResponseFailures(t *testing.T) {
+	t.Parallel()
+
+	runner := &Runner{
+		exchange: func(
+			_ context.Context,
+			message *dns.Msg,
+			_ string,
+		) (*dns.Msg, time.Duration, error) {
+			response := new(dns.Msg)
+			response.SetReply(message)
+			response.Rcode = dns.RcodeServerFailure
+
+			return response, time.Millisecond, nil
+		},
+	}
+
+	config := validPathConfig()
+	config.QueryCount = 2
+	config.Concurrency = 1
+
+	result, err := runner.RunPath(
+		context.Background(),
+		config,
+	)
+	if err != nil {
+		t.Fatalf("run benchmark path: %v", err)
+	}
+
+	assertRequestCounts(
+		t,
+		result.Requests,
+		RequestCounts{
+			Attempted:          2,
+			Failed:             2,
+			NonTimeoutFailures: 2,
+		},
+	)
+
+	assertFailureBreakdown(
+		t,
+		result.Failures,
+		FailureBreakdown{
+			DNSResponse: 2,
+		},
+	)
+}
+
+func TestRunnerRunPathRecordsNilResponseAsInvalid(t *testing.T) {
+	t.Parallel()
+
+	runner := &Runner{
+		exchange: func(
+			_ context.Context,
+			_ *dns.Msg,
+			_ string,
+		) (*dns.Msg, time.Duration, error) {
+			return nil, time.Millisecond, nil
+		},
+	}
+
+	config := validPathConfig()
+	config.QueryCount = 1
+	config.Concurrency = 1
+
+	result, err := runner.RunPath(
+		context.Background(),
+		config,
+	)
+	if err != nil {
+		t.Fatalf("run benchmark path: %v", err)
+	}
+
+	assertRequestCounts(
+		t,
+		result.Requests,
+		RequestCounts{
+			Attempted:          1,
+			Failed:             1,
+			NonTimeoutFailures: 1,
+		},
+	)
+
+	assertFailureBreakdown(
+		t,
+		result.Failures,
+		FailureBreakdown{
+			InvalidResponse: 1,
+		},
+	)
+}
+
+func TestRunnerRunPathRecordsMismatchedResponseIDAsInvalid(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	runner := &Runner{
+		exchange: func(
+			_ context.Context,
+			message *dns.Msg,
+			_ string,
+		) (*dns.Msg, time.Duration, error) {
+			response := new(dns.Msg)
+			response.SetReply(message)
+			response.Id++
+
+			return response, time.Millisecond, nil
+		},
+	}
+
+	config := validPathConfig()
+	config.QueryCount = 1
+	config.Concurrency = 1
+
+	result, err := runner.RunPath(
+		context.Background(),
+		config,
+	)
+	if err != nil {
+		t.Fatalf("run benchmark path: %v", err)
+	}
+
+	assertRequestCounts(
+		t,
+		result.Requests,
+		RequestCounts{
+			Attempted:          1,
+			Failed:             1,
+			NonTimeoutFailures: 1,
+		},
+	)
+
+	assertFailureBreakdown(
+		t,
+		result.Failures,
+		FailureBreakdown{
+			InvalidResponse: 1,
+		},
+	)
+}
+
+func TestCalculateRequestRates(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		requests RequestCounts
+		expected RequestRates
+	}{
+		{
+			name: "all successful",
+			requests: RequestCounts{
+				Attempted:  100,
+				Successful: 100,
+			},
+			expected: RequestRates{
+				SuccessPercent: 100,
+			},
+		},
+		{
+			name: "mixed result",
+			requests: RequestCounts{
+				Attempted:  200,
+				Successful: 190,
+				Failed:     10,
+				Timeouts:   4,
+			},
+			expected: RequestRates{
+				SuccessPercent: 95,
+				FailurePercent: 5,
+				TimeoutPercent: 2,
+			},
+		},
+		{
+			name:     "no attempts",
+			requests: RequestCounts{},
+			expected: RequestRates{},
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			actual := calculateRequestRates(test.requests)
+
+			assertRequestRates(
+				t,
+				actual,
+				test.expected,
+			)
+		})
+	}
+}
+
+func TestCalculateThroughput(t *testing.T) {
+	t.Parallel()
+
+	actual := calculateThroughput(
+		RequestCounts{
+			Attempted:  100,
+			Successful: 80,
+		},
+		2*time.Second,
+	)
+
+	expected := ThroughputMetrics{
+		AttemptedQueriesPerSecond:  50,
+		SuccessfulQueriesPerSecond: 40,
+	}
+
+	if actual != expected {
+		t.Fatalf(
+			"unexpected throughput: got %+v, want %+v",
+			actual,
+			expected,
+		)
+	}
+}
+
+func TestCalculateThroughputRejectsNonPositiveDuration(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	actual := calculateThroughput(
+		RequestCounts{
+			Attempted:  100,
+			Successful: 100,
+		},
+		0,
+	)
+
+	if actual != (ThroughputMetrics{}) {
+		t.Fatalf(
+			"expected empty throughput, got %+v",
+			actual,
+		)
+	}
+}
+
+func TestClassifyExchangeError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		err      error
+		expected failureKind
+	}{
+		{
+			name:     "nil",
+			err:      nil,
+			expected: failureNone,
+		},
+		{
+			name:     "context deadline",
+			err:      context.DeadlineExceeded,
+			expected: failureTimeout,
+		},
+		{
+			name: "network timeout",
+			err: testNetworkError{
+				message: "timeout",
+				timeout: true,
+			},
+			expected: failureTimeout,
+		},
+		{
+			name: "network error",
+			err: testNetworkError{
+				message: "network failure",
+			},
+			expected: failureNetwork,
+		},
+		{
+			name:     "context canceled",
+			err:      context.Canceled,
+			expected: failureInternal,
+		},
+		{
+			name:     "other",
+			err:      errors.New("unexpected failure"),
+			expected: failureOther,
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			actual := classifyExchangeError(test.err)
+
+			if actual != test.expected {
+				t.Fatalf(
+					"unexpected failure kind: got %q, want %q",
+					actual,
+					test.expected,
+				)
+			}
+		})
+	}
+}
+
+func TestRecordUnscheduledFailures(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		contextErr error
+		expected   PathResult
+	}{
+		{
+			name:       "deadline exceeded",
+			contextErr: context.DeadlineExceeded,
+			expected: PathResult{
+				Requests: RequestCounts{
+					Failed:   3,
+					Timeouts: 3,
+				},
+				Failures: FailureBreakdown{
+					Timeout: 3,
+				},
+			},
+		},
+		{
+			name:       "context canceled",
+			contextErr: context.Canceled,
+			expected: PathResult{
+				Requests: RequestCounts{
+					Failed: 3,
+				},
+				Failures: FailureBreakdown{
+					Internal: 3,
+				},
+			},
+		},
+		{
+			name:       "other",
+			contextErr: errors.New("scheduler stopped"),
+			expected: PathResult{
+				Requests: RequestCounts{
+					Failed: 3,
+				},
+				Failures: FailureBreakdown{
+					Other: 3,
+				},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			var result PathResult
+
+			recordUnscheduledFailures(
+				&result,
+				3,
+				test.contextErr,
+			)
+
+			assertRequestCounts(
+				t,
+				result.Requests,
+				test.expected.Requests,
+			)
+
+			assertFailureBreakdown(
+				t,
+				result.Failures,
+				test.expected.Failures,
+			)
+		})
 	}
 }
 
@@ -266,6 +838,34 @@ func TestRunnerRunPathRejectsNilContext(t *testing.T) {
 	}
 }
 
+func TestRunnerRunPathRejectsProtocolMismatch(t *testing.T) {
+	t.Parallel()
+
+	runner := &Runner{
+		protocol: ProtocolTCP,
+		exchange: func(
+			context.Context,
+			*dns.Msg,
+			string,
+		) (*dns.Msg, time.Duration, error) {
+			t.Fatal("exchange must not be called")
+
+			return nil, 0, nil
+		},
+	}
+
+	config := validPathConfig()
+	config.Protocol = ProtocolUDP
+
+	_, err := runner.RunPath(
+		context.Background(),
+		config,
+	)
+	if err == nil {
+		t.Fatal("expected protocol mismatch to fail")
+	}
+}
+
 func TestRunnerRunPathRejectsInvalidConfig(t *testing.T) {
 	t.Parallel()
 
@@ -304,5 +904,70 @@ func TestRunnerRejectsInvalidConfiguration(t *testing.T) {
 	_, err = NewRunner(ProtocolUDP, 0)
 	if err == nil {
 		t.Fatal("expected invalid timeout to fail")
+	}
+}
+
+type testNetworkError struct {
+	message string
+	timeout bool
+}
+
+func (e testNetworkError) Error() string {
+	return e.message
+}
+
+func (e testNetworkError) Timeout() bool {
+	return e.timeout
+}
+
+func (e testNetworkError) Temporary() bool {
+	return false
+}
+
+func assertRequestCounts(
+	t *testing.T,
+	actual RequestCounts,
+	expected RequestCounts,
+) {
+	t.Helper()
+
+	if actual != expected {
+		t.Fatalf(
+			"unexpected request counts: got %+v, want %+v",
+			actual,
+			expected,
+		)
+	}
+}
+
+func assertRequestRates(
+	t *testing.T,
+	actual RequestRates,
+	expected RequestRates,
+) {
+	t.Helper()
+
+	if actual != expected {
+		t.Fatalf(
+			"unexpected request rates: got %+v, want %+v",
+			actual,
+			expected,
+		)
+	}
+}
+
+func assertFailureBreakdown(
+	t *testing.T,
+	actual FailureBreakdown,
+	expected FailureBreakdown,
+) {
+	t.Helper()
+
+	if actual != expected {
+		t.Fatalf(
+			"unexpected failure breakdown: got %+v, want %+v",
+			actual,
+			expected,
+		)
 	}
 }
