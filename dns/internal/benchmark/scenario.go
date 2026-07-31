@@ -112,7 +112,7 @@ func NewScenarioRunner() *ScenarioRunner {
 }
 
 // RunScenario executes warmup, direct measurement, forwarded measurement,
-// and overhead calculation.
+// and comparison calculation.
 func (r *ScenarioRunner) RunScenario(
 	ctx context.Context,
 	config ScenarioConfig,
@@ -216,13 +216,18 @@ func (r *ScenarioRunner) RunScenario(
 	}
 
 	return ScenarioResult{
-		Name:        config.Name,
-		Protocol:    config.Protocol,
-		Concurrency: config.Concurrency,
-		QueryCount:  config.QueryCount,
-		Direct:      directResult,
-		Forwarded:   forwardedResult,
-		Overhead: calculateOverhead(
+		Name:              config.Name,
+		Protocol:          config.Protocol,
+		Concurrency:       config.Concurrency,
+		QueryCountPerPath: config.QueryCount,
+
+		Status:        StatusUnknown,
+		StatusReasons: make([]StatusReason, 0),
+
+		Direct:    directResult,
+		Forwarded: forwardedResult,
+
+		Comparison: calculateScenarioComparison(
 			directResult,
 			forwardedResult,
 		),
@@ -239,10 +244,10 @@ func warmupPath(
 		return err
 	}
 
-	if result.Successful != config.QueryCount {
+	if result.Requests.Successful != config.QueryCount {
 		return fmt.Errorf(
 			"%d of %d warmup queries succeeded",
-			result.Successful,
+			result.Requests.Successful,
 			config.QueryCount,
 		)
 	}
@@ -250,46 +255,104 @@ func warmupPath(
 	return nil
 }
 
-func calculateOverhead(
+func calculateScenarioComparison(
 	direct PathResult,
 	forwarded PathResult,
-) OverheadResult {
-	return OverheadResult{
-		MeanLatencyMilliseconds: round(
-			forwarded.LatencyMilliseconds.Mean-
-				direct.LatencyMilliseconds.Mean,
-			6,
-		),
-		MedianLatencyMilliseconds: round(
-			forwarded.LatencyMilliseconds.Median-
-				direct.LatencyMilliseconds.Median,
-			6,
-		),
-		P95LatencyMilliseconds: round(
-			forwarded.LatencyMilliseconds.P95-
-				direct.LatencyMilliseconds.P95,
-			6,
-		),
-		P99LatencyMilliseconds: round(
-			forwarded.LatencyMilliseconds.P99-
-				direct.LatencyMilliseconds.P99,
-			6,
-		),
-		MeanLatencyPercent: percentageChange(
-			direct.LatencyMilliseconds.Mean,
-			forwarded.LatencyMilliseconds.Mean,
-		),
-		ThroughputPercent: throughputLossPercent(
-			direct.QueriesPerSecond,
-			forwarded.QueriesPerSecond,
-		),
+) ScenarioComparison {
+	directLatency :=
+		direct.SuccessfulRequestLatencyMilliseconds
+
+	forwardedLatency :=
+		forwarded.SuccessfulRequestLatencyMilliseconds
+
+	return ScenarioComparison{
+		LatencyOverheadMilliseconds: LatencyComparison{
+			Mean: difference(
+				directLatency.Mean,
+				forwardedLatency.Mean,
+			),
+			Median: difference(
+				directLatency.Median,
+				forwardedLatency.Median,
+			),
+			P95: difference(
+				directLatency.P95,
+				forwardedLatency.P95,
+			),
+			P99: difference(
+				directLatency.P99,
+				forwardedLatency.P99,
+			),
+		},
+
+		LatencyOverheadPercent: LatencyComparison{
+			Mean: percentageChange(
+				directLatency.Mean,
+				forwardedLatency.Mean,
+			),
+			Median: percentageChange(
+				directLatency.Median,
+				forwardedLatency.Median,
+			),
+			P95: percentageChange(
+				directLatency.P95,
+				forwardedLatency.P95,
+			),
+			P99: percentageChange(
+				directLatency.P99,
+				forwardedLatency.P99,
+			),
+		},
+
+		ThroughputChangePercent: ThroughputComparison{
+			Attempted: percentageChange(
+				direct.Throughput.
+					AttemptedQueriesPerSecond,
+				forwarded.Throughput.
+					AttemptedQueriesPerSecond,
+			),
+			Successful: percentageChange(
+				direct.Throughput.
+					SuccessfulQueriesPerSecond,
+				forwarded.Throughput.
+					SuccessfulQueriesPerSecond,
+			),
+		},
+
+		ReliabilityDeltaPercentagePoints: ReliabilityComparison{
+			Success: percentagePointDifference(
+				direct.Rates.SuccessPercent,
+				forwarded.Rates.SuccessPercent,
+			),
+			Failure: percentagePointDifference(
+				direct.Rates.FailurePercent,
+				forwarded.Rates.FailurePercent,
+			),
+			Timeout: percentagePointDifference(
+				direct.Rates.TimeoutPercent,
+				forwarded.Rates.TimeoutPercent,
+			),
+		},
 	}
 }
 
-// percentageChange returns the relative increase from the baseline.
+func difference(
+	baseline float64,
+	value float64,
+) float64 {
+	return round(
+		value-baseline,
+		6,
+	)
+}
+
+// percentageChange returns the relative change from the baseline.
 //
-// A positive value means the forwarded path is slower. A negative value means
-// it is faster.
+// A positive value means the forwarded value is greater than the direct value.
+// A negative value means it is lower.
+//
+// For latency, a positive value means slower forwarding. For throughput, a
+// negative value means lower forwarded throughput.
 func percentageChange(
 	baseline float64,
 	value float64,
@@ -304,20 +367,16 @@ func percentageChange(
 	)
 }
 
-// throughputLossPercent returns throughput lost compared with the direct path.
+// percentagePointDifference returns the forwarded rate minus the direct rate.
 //
-// A positive value means lower forwarded throughput. A negative value means
-// the forwarded path measured higher throughput.
-func throughputLossPercent(
+// This intentionally uses percentage points rather than relative percentage
+// change because it compares success, failure, and timeout rates.
+func percentagePointDifference(
 	direct float64,
 	forwarded float64,
 ) float64 {
-	if direct == 0 {
-		return 0
-	}
-
 	return round(
-		(direct-forwarded)/direct*100,
+		forwarded-direct,
 		6,
 	)
 }

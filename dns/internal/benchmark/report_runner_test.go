@@ -26,8 +26,11 @@ func (r *recordedSuiteRunner) Run(
 }
 
 func validReportRunConfig() ReportRunConfig {
+	dirty := true
+
 	return ReportRunConfig{
 		ID: "benchmark-20260728-200000",
+
 		Suite: SuiteConfig{
 			DirectAddress:    "1.1.1.1:53",
 			ForwardedAddress: "127.0.0.1:5300",
@@ -41,43 +44,120 @@ func validReportRunConfig() ReportRunConfig {
 			ConcurrentWorkers: 5,
 			Timeout:           1500 * time.Millisecond,
 		},
-		Project: ProjectMetadata{
-			Name:      "homedns-analytics",
-			Version:   "v0.2.0",
-			GitCommit: "abc123",
-			GitBranch: "feature/dns-benchmark",
-			Dirty:     boolPointer(true),
+
+		BenchmarkBinary: BenchmarkBinaryMetadata{
+			Project:        "homedns-analytics",
+			Component:      "homedns-dns",
+			Version:        "v0.2.0",
+			GitCommit:      "abc123",
+			GitBranch:      "feat/benchmark-report-v2",
+			GitDirty:       &dirty,
+			GoVersion:      "go1.26.5",
+			BuildTimestamp: "2026-07-28T17:55:00Z",
 		},
+
+		TargetService: TargetServiceMetadata{
+			Address:       "127.0.0.1:5300",
+			HealthAddress: "127.0.0.1:8081",
+			Version:       "v0.2.0-rc1",
+			GitCommit:     "def456",
+			BuildTime:     "2026-07-28T17:30:00Z",
+		},
+
 		Environment: Environment{
 			Hostname:        "homedns",
 			OperatingSystem: "linux",
 			Kernel:          "6.12.0",
 			Architecture:    "arm64",
-			CPUModel:        "Raspberry Pi 3 Model B",
+			CPUModel:        "ARM Cortex-A53",
 			LogicalCPUs:     4,
-			GoVersion:       "go1.25.0",
 		},
+
+		Resources: ResourceSummary{
+			Sampling: ResourceSampling{
+				IntervalMilliseconds: 1000,
+				Errors:               make([]string, 0),
+			},
+		},
+
 		HealthAddress: "127.0.0.1:8081",
 	}
 }
 
-func successfulScenarioResult(
+func successfulReportScenario(
 	name string,
+	protocol string,
+	concurrency int,
 ) ScenarioResult {
 	return ScenarioResult{
-		Name:        name,
-		Protocol:    ProtocolUDP,
-		Concurrency: 1,
-		QueryCount:  10,
-		Direct: PathResult{
-			Requests:   10,
-			Successful: 10,
-		},
-		Forwarded: PathResult{
-			Requests:   10,
-			Successful: 10,
-		},
+		Name:              name,
+		Protocol:          protocol,
+		Concurrency:       concurrency,
+		QueryCountPerPath: 10,
+
+		Direct: successfulPathResult(
+			10,
+			2,
+			100,
+			100,
+		),
+
+		Forwarded: successfulPathResult(
+			10,
+			3,
+			90,
+			90,
+		),
 	}
+}
+
+func degradedReportScenario(
+	name string,
+) ScenarioResult {
+	scenario := successfulReportScenario(
+		name,
+		ProtocolTCP,
+		10,
+	)
+
+	scenario.Forwarded.Requests = RequestCounts{
+		Attempted:          100,
+		Successful:         98,
+		Failed:             2,
+		Timeouts:           1,
+		NonTimeoutFailures: 1,
+	}
+
+	scenario.Forwarded.Rates = calculateRequestRates(
+		scenario.Forwarded.Requests,
+	)
+
+	return scenario
+}
+
+func failedReportScenario(
+	name string,
+) ScenarioResult {
+	scenario := successfulReportScenario(
+		name,
+		ProtocolTCP,
+		10,
+	)
+
+	scenario.Forwarded.Requests = RequestCounts{
+		Attempted:  100,
+		Successful: 90,
+		Failed:     10,
+		Timeouts:   8,
+
+		NonTimeoutFailures: 2,
+	}
+
+	scenario.Forwarded.Rates = calculateRequestRates(
+		scenario.Forwarded.Requests,
+	)
+
+	return scenario
 }
 
 func TestReportRunnerRun(t *testing.T) {
@@ -107,11 +187,15 @@ func TestReportRunnerRun(t *testing.T) {
 
 	fakeSuite := &recordedSuiteRunner{
 		results: []ScenarioResult{
-			successfulScenarioResult(
+			successfulReportScenario(
 				"udp-sequential",
+				ProtocolUDP,
+				1,
 			),
-			successfulScenarioResult(
+			successfulReportScenario(
 				"udp-concurrent",
+				ProtocolUDP,
+				5,
 			),
 		},
 	}
@@ -147,39 +231,49 @@ func TestReportRunnerRun(t *testing.T) {
 		)
 	}
 
-	if report.Benchmark.ID != config.ID {
+	if report.Report.ID != config.ID {
 		t.Fatalf(
-			"unexpected benchmark ID: got %q, want %q",
-			report.Benchmark.ID,
+			"unexpected report ID: got %q, want %q",
+			report.Report.ID,
 			config.ID,
 		)
 	}
 
-	if !report.Benchmark.StartedAt.Equal(startedAt) {
+	if !report.Execution.StartedAt.Equal(startedAt) {
 		t.Fatalf(
-			"unexpected start time: %v",
-			report.Benchmark.StartedAt,
+			"unexpected start time: got %s, want %s",
+			report.Execution.StartedAt,
+			startedAt,
 		)
 	}
 
-	if !report.Benchmark.EndedAt.Equal(endedAt) {
+	if !report.Execution.EndedAt.Equal(endedAt) {
 		t.Fatalf(
-			"unexpected end time: %v",
-			report.Benchmark.EndedAt,
+			"unexpected end time: got %s, want %s",
+			report.Execution.EndedAt,
+			endedAt,
 		)
 	}
 
-	if report.Benchmark.DurationMilliseconds != 2500 {
+	if report.Execution.DurationMilliseconds != 2500 {
 		t.Fatalf(
 			"unexpected duration: got %f, want %f",
-			report.Benchmark.DurationMilliseconds,
+			report.Execution.DurationMilliseconds,
 			2500.0,
 		)
 	}
 
-	if report.Project != config.Project {
+	if report.BenchmarkBinary !=
+		config.BenchmarkBinary {
 		t.Fatal(
-			"project metadata was not preserved",
+			"benchmark binary metadata was not preserved",
+		)
+	}
+
+	if report.TargetService !=
+		config.TargetService {
+		t.Fatal(
+			"target service metadata was not preserved",
 		)
 	}
 
@@ -192,31 +286,59 @@ func TestReportRunnerRun(t *testing.T) {
 	if report.Configuration.UpstreamAddress !=
 		config.Suite.DirectAddress {
 		t.Fatalf(
-			"unexpected upstream address: %q",
+			"unexpected upstream address: got %q, want %q",
 			report.Configuration.UpstreamAddress,
+			config.Suite.DirectAddress,
 		)
 	}
 
 	if report.Configuration.HomeDNSAddress !=
 		config.Suite.ForwardedAddress {
 		t.Fatalf(
-			"unexpected HomeDNS address: %q",
+			"unexpected HomeDNS address: got %q, want %q",
 			report.Configuration.HomeDNSAddress,
+			config.Suite.ForwardedAddress,
 		)
 	}
 
 	if report.Configuration.HealthAddress !=
 		config.HealthAddress {
 		t.Fatalf(
-			"unexpected health address: %q",
+			"unexpected health address: got %q, want %q",
 			report.Configuration.HealthAddress,
+			config.HealthAddress,
 		)
 	}
 
 	if report.Configuration.QueryType != "A" {
 		t.Fatalf(
-			"unexpected query type: %q",
+			"unexpected query type: got %q, want %q",
 			report.Configuration.QueryType,
+			"A",
+		)
+	}
+
+	if report.Configuration.WarmupQueries != 5 {
+		t.Fatalf(
+			"unexpected warmup count: got %d, want %d",
+			report.Configuration.WarmupQueries,
+			5,
+		)
+	}
+
+	if report.Configuration.QueriesPerPath != 20 {
+		t.Fatalf(
+			"unexpected queries per path: got %d, want %d",
+			report.Configuration.QueriesPerPath,
+			20,
+		)
+	}
+
+	if report.Configuration.ConcurrentWorkers != 5 {
+		t.Fatalf(
+			"unexpected worker count: got %d, want %d",
+			report.Configuration.ConcurrentWorkers,
+			5,
 		)
 	}
 
@@ -228,6 +350,43 @@ func TestReportRunnerRun(t *testing.T) {
 		)
 	}
 
+	if report.Configuration.ResourceIntervalMS != 1000 {
+		t.Fatalf(
+			"unexpected resource interval: got %d, want %d",
+			report.Configuration.ResourceIntervalMS,
+			1000,
+		)
+	}
+
+	expectedOrder := []string{
+		"udp-sequential",
+		"udp-concurrent",
+		"tcp-sequential",
+		"tcp-concurrent",
+	}
+
+	assertStringSlicesEqual(
+		t,
+		report.Configuration.ScenarioOrder,
+		expectedOrder,
+	)
+
+	expectedThresholds := StatusThresholds{
+		DegradedFailurePercent: 1,
+		FailedFailurePercent:   5,
+		DegradedTimeoutPercent: 1,
+		FailedTimeoutPercent:   5,
+	}
+
+	if report.Configuration.StatusThresholds !=
+		expectedThresholds {
+		t.Fatalf(
+			"unexpected status thresholds: got %+v, want %+v",
+			report.Configuration.StatusThresholds,
+			expectedThresholds,
+		)
+	}
+
 	if len(report.Scenarios) != 2 {
 		t.Fatalf(
 			"unexpected scenario count: got %d, want %d",
@@ -236,27 +395,105 @@ func TestReportRunnerRun(t *testing.T) {
 		)
 	}
 
-	if report.Summary.Status != "success" {
+	for _, scenario := range report.Scenarios {
+		if scenario.Status != StatusPassed {
+			t.Fatalf(
+				"unexpected scenario status for %q: got %q, want %q",
+				scenario.Name,
+				scenario.Status,
+				StatusPassed,
+			)
+		}
+	}
+
+	if report.Summary.Status != StatusPassed {
 		t.Fatalf(
-			"unexpected summary status: %q",
+			"unexpected summary status: got %q, want %q",
 			report.Summary.Status,
+			StatusPassed,
 		)
 	}
 
-	if report.Summary.RequestsTotal != 40 {
+	if report.Report.Status != StatusPassed {
 		t.Fatalf(
-			"unexpected request total: got %d, want %d",
-			report.Summary.RequestsTotal,
-			40,
+			"unexpected report status: got %q, want %q",
+			report.Report.Status,
+			StatusPassed,
 		)
 	}
 
-	if report.Summary.SuccessfulTotal != 40 {
+	assertRequestCounts(
+		t,
+		report.Summary.Requests,
+		RequestCounts{
+			Attempted:  40,
+			Successful: 40,
+		},
+	)
+
+	assertRequestRates(
+		t,
+		report.Summary.Rates,
+		RequestRates{
+			SuccessPercent: 100,
+		},
+	)
+
+	if report.Summary.Throughput.
+		AttemptedQueriesPerSecond != 16 {
 		t.Fatalf(
-			"unexpected successful total: got %d, want %d",
-			report.Summary.SuccessfulTotal,
-			40,
+			"unexpected attempted summary QPS: got %f, want %f",
+			report.Summary.Throughput.
+				AttemptedQueriesPerSecond,
+			16.0,
 		)
+	}
+
+	if report.Summary.Throughput.
+		SuccessfulQueriesPerSecond != 16 {
+		t.Fatalf(
+			"unexpected successful summary QPS: got %f, want %f",
+			report.Summary.Throughput.
+				SuccessfulQueriesPerSecond,
+			16.0,
+		)
+	}
+
+	assertRequestCounts(
+		t,
+		report.Summary.
+			Reliability.
+			Direct.
+			Requests,
+		RequestCounts{
+			Attempted:  20,
+			Successful: 20,
+		},
+	)
+
+	assertRequestCounts(
+		t,
+		report.Summary.
+			Reliability.
+			Forwarded.
+			Requests,
+		RequestCounts{
+			Attempted:  20,
+			Successful: 20,
+		},
+	)
+
+	assertStringSlicesEqual(
+		t,
+		report.Summary.ScenarioResults.Passed,
+		[]string{
+			"udp-sequential",
+			"udp-concurrent",
+		},
+	)
+
+	if report.Summary.WorstScenario == nil {
+		t.Fatal("expected worst scenario to be populated")
 	}
 
 	if len(fakeSuite.configs) != 1 {
@@ -266,9 +503,16 @@ func TestReportRunnerRun(t *testing.T) {
 			1,
 		)
 	}
+
+	if fakeSuite.configs[0].DirectAddress !=
+		config.Suite.DirectAddress {
+		t.Fatal("suite configuration was not preserved")
+	}
 }
 
-func TestReportRunnerCopiesQueryNames(t *testing.T) {
+func TestReportRunnerCopiesConfigurationSlices(
+	t *testing.T,
+) {
 	t.Parallel()
 
 	startedAt := time.Date(
@@ -284,8 +528,10 @@ func TestReportRunnerCopiesQueryNames(t *testing.T) {
 
 	fakeSuite := &recordedSuiteRunner{
 		results: []ScenarioResult{
-			successfulScenarioResult(
+			successfulReportScenario(
 				"udp-sequential",
+				ProtocolUDP,
+				1,
 			),
 		},
 	}
@@ -313,22 +559,34 @@ func TestReportRunnerCopiesQueryNames(t *testing.T) {
 	report.Configuration.QueryNames[0] =
 		"modified.example."
 
+	report.Configuration.ScenarioOrder[0] =
+		"modified-scenario"
+
 	if config.Suite.QueryNames[0] != "example.com." {
 		t.Fatal(
 			"report query names unexpectedly modify configuration",
 		)
 	}
+
+	if config.Suite.Scenarios()[0].Name !=
+		"udp-sequential" {
+		t.Fatal(
+			"report scenario order unexpectedly modifies suite configuration",
+		)
+	}
 }
 
-func TestReportRunnerUsesDefaultProjectName(
+func TestReportRunnerUsesDefaultBinaryMetadata(
 	t *testing.T,
 ) {
 	t.Parallel()
 
 	fakeSuite := &recordedSuiteRunner{
 		results: []ScenarioResult{
-			successfulScenarioResult(
+			successfulReportScenario(
 				"udp-sequential",
+				ProtocolUDP,
+				1,
 			),
 		},
 	}
@@ -339,7 +597,8 @@ func TestReportRunnerUsesDefaultProjectName(
 	}
 
 	config := validReportRunConfig()
-	config.Project.Name = ""
+	config.BenchmarkBinary.Project = ""
+	config.BenchmarkBinary.Component = ""
 
 	report, err := runner.Run(
 		context.Background(),
@@ -352,10 +611,119 @@ func TestReportRunnerUsesDefaultProjectName(
 		)
 	}
 
-	if report.Project.Name != "homedns-analytics" {
+	if report.BenchmarkBinary.Project !=
+		"homedns-analytics" {
 		t.Fatalf(
-			"unexpected project name: %q",
-			report.Project.Name,
+			"unexpected project name: got %q",
+			report.BenchmarkBinary.Project,
+		)
+	}
+
+	if report.BenchmarkBinary.Component !=
+		"homedns-dns" {
+		t.Fatalf(
+			"unexpected component name: got %q",
+			report.BenchmarkBinary.Component,
+		)
+	}
+}
+
+func TestReportRunnerUsesTargetAddressDefaults(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	fakeSuite := &recordedSuiteRunner{
+		results: []ScenarioResult{
+			successfulReportScenario(
+				"udp-sequential",
+				ProtocolUDP,
+				1,
+			),
+		},
+	}
+
+	runner := &ReportRunner{
+		suiteRunner: fakeSuite,
+		now:         time.Now,
+	}
+
+	config := validReportRunConfig()
+	config.TargetService.Address = ""
+	config.TargetService.HealthAddress = ""
+
+	report, err := runner.Run(
+		context.Background(),
+		config,
+	)
+	if err != nil {
+		t.Fatalf(
+			"run benchmark report: %v",
+			err,
+		)
+	}
+
+	if report.TargetService.Address !=
+		config.Suite.ForwardedAddress {
+		t.Fatalf(
+			"unexpected target address: got %q, want %q",
+			report.TargetService.Address,
+			config.Suite.ForwardedAddress,
+		)
+	}
+
+	if report.TargetService.HealthAddress !=
+		config.HealthAddress {
+		t.Fatalf(
+			"unexpected target health address: got %q, want %q",
+			report.TargetService.HealthAddress,
+			config.HealthAddress,
+		)
+	}
+}
+
+func TestReportRunnerUsesCustomThresholds(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	fakeSuite := &recordedSuiteRunner{
+		results: []ScenarioResult{
+			degradedReportScenario(
+				"tcp-concurrent",
+			),
+		},
+	}
+
+	runner := &ReportRunner{
+		suiteRunner: fakeSuite,
+		now:         time.Now,
+	}
+
+	config := validReportRunConfig()
+	config.StatusThresholds = StatusThresholds{
+		DegradedFailurePercent: 3,
+		FailedFailurePercent:   10,
+		DegradedTimeoutPercent: 3,
+		FailedTimeoutPercent:   10,
+	}
+
+	report, err := runner.Run(
+		context.Background(),
+		config,
+	)
+	if err != nil {
+		t.Fatalf(
+			"run benchmark report: %v",
+			err,
+		)
+	}
+
+	if report.Scenarios[0].Status != StatusPassed {
+		t.Fatalf(
+			"unexpected scenario status: got %q, want %q",
+			report.Scenarios[0].Status,
+			StatusPassed,
 		)
 	}
 }
@@ -414,6 +782,42 @@ func TestReportRunnerRejectsInvalidConfiguration(
 			name: "invalid suite configuration",
 			mutate: func(config *ReportRunConfig) {
 				config.Suite.DirectAddress = ""
+			},
+		},
+		{
+			name: "negative degraded failure threshold",
+			mutate: func(config *ReportRunConfig) {
+				config.StatusThresholds =
+					StatusThresholds{
+						DegradedFailurePercent: -1,
+						FailedFailurePercent:   5,
+						DegradedTimeoutPercent: 1,
+						FailedTimeoutPercent:   5,
+					}
+			},
+		},
+		{
+			name: "degraded failure exceeds failed threshold",
+			mutate: func(config *ReportRunConfig) {
+				config.StatusThresholds =
+					StatusThresholds{
+						DegradedFailurePercent: 10,
+						FailedFailurePercent:   5,
+						DegradedTimeoutPercent: 1,
+						FailedTimeoutPercent:   5,
+					}
+			},
+		},
+		{
+			name: "degraded timeout exceeds failed threshold",
+			mutate: func(config *ReportRunConfig) {
+				config.StatusThresholds =
+					StatusThresholds{
+						DegradedFailurePercent: 1,
+						FailedFailurePercent:   5,
+						DegradedTimeoutPercent: 10,
+						FailedTimeoutPercent:   5,
+					}
 			},
 		},
 	}
@@ -503,52 +907,245 @@ func TestReportRunnerRejectsMissingClock(
 	}
 }
 
-func TestSummarizeScenariosSuccess(t *testing.T) {
+func TestReportRunnerRejectsNilContext(
+	t *testing.T,
+) {
 	t.Parallel()
 
-	summary := summarizeScenarios(
+	runner := &ReportRunner{
+		suiteRunner: &recordedSuiteRunner{},
+		now:         time.Now,
+	}
+
+	_, err := runner.Run(
+		nil,
+		validReportRunConfig(),
+	)
+	if err == nil {
+		t.Fatal(
+			"expected nil benchmark context to fail",
+		)
+	}
+}
+
+func TestClassifyScenarioPassed(t *testing.T) {
+	t.Parallel()
+
+	scenario := successfulReportScenario(
+		"udp-sequential",
+		ProtocolUDP,
+		1,
+	)
+
+	classifyScenario(
+		&scenario,
+		resolvedStatusThresholds(
+			StatusThresholds{},
+		),
+	)
+
+	if scenario.Status != StatusPassed {
+		t.Fatalf(
+			"unexpected status: got %q, want %q",
+			scenario.Status,
+			StatusPassed,
+		)
+	}
+
+	if len(scenario.StatusReasons) != 0 {
+		t.Fatalf(
+			"unexpected status reasons: %v",
+			scenario.StatusReasons,
+		)
+	}
+}
+
+func TestClassifyScenarioDegraded(t *testing.T) {
+	t.Parallel()
+
+	scenario := degradedReportScenario(
+		"tcp-concurrent",
+	)
+
+	classifyScenario(
+		&scenario,
+		resolvedStatusThresholds(
+			StatusThresholds{},
+		),
+	)
+
+	if scenario.Status != StatusDegraded {
+		t.Fatalf(
+			"unexpected status: got %q, want %q",
+			scenario.Status,
+			StatusDegraded,
+		)
+	}
+
+	if len(scenario.StatusReasons) == 1 {
+		t.Fatalf(
+			"unexpected status reason count: got %d, want %d",
+			len(scenario.StatusReasons),
+			1,
+		)
+	}
+
+	reason := scenario.StatusReasons[0]
+
+	if reason.Code !=
+		"QUERY_FAILURE_RATE_EXCEEDED" {
+		t.Fatalf(
+			"unexpected reason code: got %q",
+			reason.Code,
+		)
+	}
+
+	if reason.Path != "forwarded" {
+		t.Fatalf(
+			"unexpected reason path: got %q",
+			reason.Path,
+		)
+	}
+
+	if reason.Observed == nil ||
+		*reason.Observed != 2 {
+		t.Fatalf(
+			"unexpected observed rate: %v",
+			reason.Observed,
+		)
+	}
+
+	if reason.Threshold == nil ||
+		*reason.Threshold != 1 {
+		t.Fatalf(
+			"unexpected threshold: %v",
+			reason.Threshold,
+		)
+	}
+}
+
+func TestClassifyScenarioFailed(t *testing.T) {
+	t.Parallel()
+
+	scenario := failedReportScenario(
+		"tcp-concurrent",
+	)
+
+	classifyScenario(
+		&scenario,
+		resolvedStatusThresholds(
+			StatusThresholds{},
+		),
+	)
+
+	if scenario.Status != StatusFailed {
+		t.Fatalf(
+			"unexpected status: got %q, want %q",
+			scenario.Status,
+			StatusFailed,
+		)
+	}
+
+	if len(scenario.StatusReasons) != 2 {
+		t.Fatalf(
+			"unexpected status reason count: got %d, want %d",
+			len(scenario.StatusReasons),
+			2,
+		)
+	}
+}
+
+func TestClassifyScenarioInvalidWithoutRequests(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	scenario := ScenarioResult{
+		Name: "udp-sequential",
+	}
+
+	classifyScenario(
+		&scenario,
+		resolvedStatusThresholds(
+			StatusThresholds{},
+		),
+	)
+
+	if scenario.Status != StatusInvalid {
+		t.Fatalf(
+			"unexpected status: got %q, want %q",
+			scenario.Status,
+			StatusInvalid,
+		)
+	}
+
+	if len(scenario.StatusReasons) != 2 {
+		t.Fatalf(
+			"unexpected status reason count: got %d, want %d",
+			len(scenario.StatusReasons),
+			2,
+		)
+	}
+}
+
+func TestSummarizeScenariosPassed(t *testing.T) {
+	t.Parallel()
+
+	scenarios := classifyScenarios(
 		[]ScenarioResult{
-			successfulScenarioResult(
+			successfulReportScenario(
 				"udp-sequential",
+				ProtocolUDP,
+				1,
 			),
-			successfulScenarioResult(
+			successfulReportScenario(
 				"tcp-sequential",
+				ProtocolTCP,
+				1,
 			),
+		},
+		resolvedStatusThresholds(
+			StatusThresholds{},
+		),
+	)
+
+	summary := summarizeScenarios(
+		scenarios,
+		2_000,
+	)
+
+	if summary.Status != StatusPassed {
+		t.Fatalf(
+			"unexpected status: got %q, want %q",
+			summary.Status,
+			StatusPassed,
+		)
+	}
+
+	assertRequestCounts(
+		t,
+		summary.Requests,
+		RequestCounts{
+			Attempted:  40,
+			Successful: 40,
 		},
 	)
 
-	if summary.Status != "success" {
-		t.Fatalf(
-			"unexpected status: %q",
-			summary.Status,
-		)
-	}
+	assertRequestRates(
+		t,
+		summary.Rates,
+		RequestRates{
+			SuccessPercent: 100,
+		},
+	)
 
-	if summary.RequestsTotal != 40 {
+	if summary.Throughput.
+		AttemptedQueriesPerSecond != 20 {
 		t.Fatalf(
-			"unexpected request total: %d",
-			summary.RequestsTotal,
-		)
-	}
-
-	if summary.SuccessfulTotal != 40 {
-		t.Fatalf(
-			"unexpected successful total: %d",
-			summary.SuccessfulTotal,
-		)
-	}
-
-	if summary.FailedTotal != 0 {
-		t.Fatalf(
-			"unexpected failed total: %d",
-			summary.FailedTotal,
-		)
-	}
-
-	if summary.TimeoutsTotal != 0 {
-		t.Fatalf(
-			"unexpected timeout total: %d",
-			summary.TimeoutsTotal,
+			"unexpected attempted QPS: got %f, want %f",
+			summary.Throughput.
+				AttemptedQueriesPerSecond,
+			20.0,
 		)
 	}
 
@@ -563,77 +1160,104 @@ func TestSummarizeScenariosSuccess(t *testing.T) {
 func TestSummarizeScenariosDegraded(t *testing.T) {
 	t.Parallel()
 
-	scenario := successfulScenarioResult(
-		"udp-sequential",
+	scenarios := classifyScenarios(
+		[]ScenarioResult{
+			degradedReportScenario(
+				"tcp-concurrent",
+			),
+		},
+		resolvedStatusThresholds(
+			StatusThresholds{},
+		),
 	)
-
-	scenario.Forwarded.Successful = 7
-	scenario.Forwarded.Failed = 3
-	scenario.Forwarded.Timeouts = 2
 
 	summary := summarizeScenarios(
-		[]ScenarioResult{scenario},
+		scenarios,
+		10_000,
 	)
 
-	if summary.Status != "degraded" {
+	if summary.Status != StatusDegraded {
 		t.Fatalf(
-			"unexpected status: %q",
+			"unexpected status: got %q, want %q",
 			summary.Status,
+			StatusDegraded,
 		)
 	}
 
-	if summary.RequestsTotal != 20 {
-		t.Fatalf(
-			"unexpected request total: %d",
-			summary.RequestsTotal,
-		)
-	}
+	assertRequestCounts(
+		t,
+		summary.Requests,
+		RequestCounts{
+			Attempted:          110,
+			Successful:         108,
+			Failed:             2,
+			Timeouts:           1,
+			NonTimeoutFailures: 1,
+		},
+	)
 
-	if summary.SuccessfulTotal != 17 {
-		t.Fatalf(
-			"unexpected successful total: %d",
-			summary.SuccessfulTotal,
-		)
-	}
+	assertStringSlicesEqual(
+		t,
+		summary.ScenarioResults.Degraded,
+		[]string{"tcp-concurrent"},
+	)
 
-	if summary.FailedTotal != 3 {
-		t.Fatalf(
-			"unexpected failed total: %d",
-			summary.FailedTotal,
-		)
-	}
-
-	if summary.TimeoutsTotal != 2 {
-		t.Fatalf(
-			"unexpected timeout total: %d",
-			summary.TimeoutsTotal,
-		)
-	}
-
-	if len(summary.Notes) != 1 {
+	if len(summary.Notes) != 2 {
 		t.Fatalf(
 			"unexpected notes: %v",
 			summary.Notes,
+		)
+	}
+
+	if summary.WorstScenario == nil {
+		t.Fatal("expected worst scenario")
+	}
+
+	if summary.WorstScenario.Name !=
+		"tcp-concurrent" {
+		t.Fatalf(
+			"unexpected worst scenario: got %q",
+			summary.WorstScenario.Name,
+		)
+	}
+
+	if summary.WorstScenario.Path !=
+		"forwarded" {
+		t.Fatalf(
+			"unexpected worst path: got %q",
+			summary.WorstScenario.Path,
 		)
 	}
 }
 
-func TestSummarizeScenariosEmpty(t *testing.T) {
+func TestSummarizeScenariosInvalidWhenEmpty(
+	t *testing.T,
+) {
 	t.Parallel()
 
-	summary := summarizeScenarios(nil)
+	summary := summarizeScenarios(nil, 0)
 
-	if summary.Status != "unknown" {
+	if summary.Status != StatusInvalid {
 		t.Fatalf(
-			"unexpected status: %q",
+			"unexpected status: got %q, want %q",
 			summary.Status,
+			StatusInvalid,
 		)
 	}
 
-	if len(summary.Notes) != 1 {
+	if len(summary.StatusReasons) != 1 {
 		t.Fatalf(
-			"unexpected notes: %v",
-			summary.Notes,
+			"unexpected reason count: got %d, want %d",
+			len(summary.StatusReasons),
+			1,
+		)
+	}
+
+	if summary.StatusReasons[0].Code !=
+		"NO_SCENARIOS_EXECUTED" {
+		t.Fatalf(
+			"unexpected reason code: got %q",
+			summary.StatusReasons[0].Code,
 		)
 	}
 }
@@ -641,44 +1265,93 @@ func TestSummarizeScenariosEmpty(t *testing.T) {
 func TestQueryTypeName(t *testing.T) {
 	t.Parallel()
 
+	if actual := queryTypeName(dns.TypeA); actual != "A" {
+		t.Fatalf(
+			"unexpected A query type: got %q",
+			actual,
+		)
+	}
+
+	if actual := queryTypeName(65000); actual !=
+		"TYPE65000" {
+		t.Fatalf(
+			"unexpected unknown query type: got %q",
+			actual,
+		)
+	}
+}
+
+func TestHigherStatus(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
-		name      string
-		queryType uint16
-		want      string
+		current   string
+		candidate string
+		expected  string
 	}{
 		{
-			name:      "known query type",
-			queryType: dns.TypeAAAA,
-			want:      "AAAA",
+			current:   StatusUnknown,
+			candidate: StatusPassed,
+			expected:  StatusPassed,
 		},
 		{
-			name:      "unknown query type",
-			queryType: 65000,
-			want:      "TYPE65000",
+			current:   StatusPassed,
+			candidate: StatusDegraded,
+			expected:  StatusDegraded,
+		},
+		{
+			current:   StatusFailed,
+			candidate: StatusDegraded,
+			expected:  StatusFailed,
+		},
+		{
+			current:   StatusFailed,
+			candidate: StatusInvalid,
+			expected:  StatusInvalid,
 		},
 	}
 
 	for _, test := range tests {
-		test := test
+		actual := higherStatus(
+			test.current,
+			test.candidate,
+		)
 
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			got := queryTypeName(
-				test.queryType,
+		if actual != test.expected {
+			t.Fatalf(
+				"unexpected higher status: got %q, want %q",
+				actual,
+				test.expected,
 			)
-
-			if got != test.want {
-				t.Fatalf(
-					"unexpected query type name: got %q, want %q",
-					got,
-					test.want,
-				)
-			}
-		})
+		}
 	}
 }
 
-func boolPointer(value bool) *bool {
-	return &value
+func assertStringSlicesEqual(
+	t *testing.T,
+	actual []string,
+	expected []string,
+) {
+	t.Helper()
+
+	if len(actual) != len(expected) {
+		t.Fatalf(
+			"unexpected slice length: got %d, want %d; actual=%v expected=%v",
+			len(actual),
+			len(expected),
+			actual,
+			expected,
+		)
+	}
+
+	for index := range expected {
+		if actual[index] != expected[index] {
+			t.Fatalf(
+				"unexpected value at index %d: got %q, want %q",
+				index,
+				actual[index],
+				expected[index],
+			)
+		}
+	}
 }

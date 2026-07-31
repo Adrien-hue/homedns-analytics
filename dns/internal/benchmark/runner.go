@@ -121,6 +121,7 @@ func (r *Runner) RunPath(
 			select {
 			case <-ctx.Done():
 				return
+
 			case jobs <- queryIndex:
 				scheduled.Add(1)
 			}
@@ -133,7 +134,9 @@ func (r *Runner) RunPath(
 	}()
 
 	result := PathResult{
-		Requests: config.QueryCount,
+		Requests: RequestCounts{
+			Attempted: config.QueryCount,
+		},
 	}
 
 	latencies := make(
@@ -143,17 +146,17 @@ func (r *Runner) RunPath(
 	)
 
 	for observation := range observations {
-		if observation.timeout {
-			result.Timeouts++
-		}
-
 		if observation.err != nil {
-			result.Failed++
+			recordFailure(
+				&result,
+				observation.failure,
+			)
 
 			continue
 		}
 
-		result.Successful++
+		result.Requests.Successful++
+
 		latencies = append(
 			latencies,
 			observation.latency,
@@ -162,11 +165,11 @@ func (r *Runner) RunPath(
 
 	unscheduled := config.QueryCount - int(scheduled.Load())
 	if unscheduled > 0 {
-		result.Failed += unscheduled
-
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			result.Timeouts += unscheduled
-		}
+		recordUnscheduledFailures(
+			&result,
+			unscheduled,
+			ctx.Err(),
+		)
 	}
 
 	elapsed := time.Since(startedAt)
@@ -176,12 +179,18 @@ func (r *Runner) RunPath(
 		6,
 	)
 
-	if elapsed > 0 {
-		result.QueriesPerSecond = round(
-			float64(result.Successful)/elapsed.Seconds(),
-			6,
-		)
-	}
+	result.Requests.NonTimeoutFailures =
+		result.Requests.Failed -
+			result.Requests.Timeouts
+
+	result.Rates = calculateRequestRates(
+		result.Requests,
+	)
+
+	result.Throughput = calculateThroughput(
+		result.Requests,
+		elapsed,
+	)
 
 	if len(latencies) > 0 {
 		statistics, err := CalculateLatencyStatistics(
@@ -194,7 +203,11 @@ func (r *Runner) RunPath(
 			)
 		}
 
-		result.LatencyMilliseconds = statistics
+		result.SuccessfulRequestLatencyMilliseconds =
+			successfulLatencyStatistics(
+				len(latencies),
+				statistics,
+			)
 	}
 
 	return result, nil
@@ -202,9 +215,21 @@ func (r *Runner) RunPath(
 
 type queryObservation struct {
 	latency time.Duration
-	timeout bool
+	failure failureKind
 	err     error
 }
+
+type failureKind string
+
+const (
+	failureNone            failureKind = ""
+	failureTimeout         failureKind = "timeout"
+	failureNetwork         failureKind = "network"
+	failureDNSResponse     failureKind = "dns_response"
+	failureInvalidResponse failureKind = "invalid_response"
+	failureInternal        failureKind = "internal"
+	failureOther           failureKind = "other"
+)
 
 func (r *Runner) executeQuery(
 	ctx context.Context,
@@ -227,25 +252,32 @@ func (r *Runner) executeQuery(
 	)
 	if err != nil {
 		return queryObservation{
-			timeout: isTimeout(err),
+			failure: classifyExchangeError(err),
 			err:     err,
 		}
 	}
 
 	if response == nil {
 		return queryObservation{
-			err: errors.New("DNS server returned no response"),
+			failure: failureInvalidResponse,
+			err: errors.New(
+				"DNS server returned no response",
+			),
 		}
 	}
 
 	if response.Id != message.Id {
 		return queryObservation{
-			err: errors.New("DNS response ID does not match query"),
+			failure: failureInvalidResponse,
+			err: errors.New(
+				"DNS response ID does not match query",
+			),
 		}
 	}
 
 	if response.Rcode != dns.RcodeSuccess {
 		return queryObservation{
+			failure: failureDNSResponse,
 			err: fmt.Errorf(
 				"DNS server returned response code %s",
 				dns.RcodeToString[response.Rcode],
@@ -255,6 +287,155 @@ func (r *Runner) executeQuery(
 
 	return queryObservation{
 		latency: latency,
+		failure: failureNone,
+	}
+}
+
+func classifyExchangeError(err error) failureKind {
+	if err == nil {
+		return failureNone
+	}
+
+	if isTimeout(err) {
+		return failureTimeout
+	}
+
+	var networkError net.Error
+	if errors.As(err, &networkError) {
+		return failureNetwork
+	}
+
+	if errors.Is(err, context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded) {
+		return failureInternal
+	}
+
+	return failureOther
+}
+
+func recordFailure(
+	result *PathResult,
+	kind failureKind,
+) {
+	if result == nil {
+		return
+	}
+
+	result.Requests.Failed++
+
+	switch kind {
+	case failureTimeout:
+		result.Requests.Timeouts++
+		result.Failures.Timeout++
+
+	case failureNetwork:
+		result.Failures.Network++
+
+	case failureDNSResponse:
+		result.Failures.DNSResponse++
+
+	case failureInvalidResponse:
+		result.Failures.InvalidResponse++
+
+	case failureInternal:
+		result.Failures.Internal++
+
+	default:
+		result.Failures.Other++
+	}
+}
+
+func recordUnscheduledFailures(
+	result *PathResult,
+	count int,
+	contextErr error,
+) {
+	if result == nil || count <= 0 {
+		return
+	}
+
+	result.Requests.Failed += count
+
+	if errors.Is(contextErr, context.DeadlineExceeded) {
+		result.Requests.Timeouts += count
+		result.Failures.Timeout += count
+
+		return
+	}
+
+	if errors.Is(contextErr, context.Canceled) {
+		result.Failures.Internal += count
+
+		return
+	}
+
+	result.Failures.Other += count
+}
+
+func calculateRequestRates(
+	requests RequestCounts,
+) RequestRates {
+	if requests.Attempted <= 0 {
+		return RequestRates{}
+	}
+
+	attempted := float64(requests.Attempted)
+
+	return RequestRates{
+		SuccessPercent: round(
+			float64(requests.Successful)/
+				attempted*100,
+			6,
+		),
+		FailurePercent: round(
+			float64(requests.Failed)/
+				attempted*100,
+			6,
+		),
+		TimeoutPercent: round(
+			float64(requests.Timeouts)/
+				attempted*100,
+			6,
+		),
+	}
+}
+
+func calculateThroughput(
+	requests RequestCounts,
+	elapsed time.Duration,
+) ThroughputMetrics {
+	if elapsed <= 0 {
+		return ThroughputMetrics{}
+	}
+
+	elapsedSeconds := elapsed.Seconds()
+
+	return ThroughputMetrics{
+		AttemptedQueriesPerSecond: round(
+			float64(requests.Attempted)/
+				elapsedSeconds,
+			6,
+		),
+		SuccessfulQueriesPerSecond: round(
+			float64(requests.Successful)/
+				elapsedSeconds,
+			6,
+		),
+	}
+}
+
+func successfulLatencyStatistics(
+	sampleCount int,
+	statistics LatencyStatistics,
+) SuccessfulLatencyStatistics {
+	return SuccessfulLatencyStatistics{
+		SampleCount: sampleCount,
+		Minimum:     statistics.Minimum,
+		Mean:        statistics.Mean,
+		Median:      statistics.Median,
+		P95:         statistics.P95,
+		P99:         statistics.P99,
+		Maximum:     statistics.Maximum,
 	}
 }
 
