@@ -22,7 +22,10 @@ type ServiceConfig struct {
 	BenchmarkBinary BenchmarkBinaryMetadata
 	TargetService   TargetServiceMetadata
 	Environment     Environment
-	Resources       ResourceSummary
+
+	// ResourceCollection enables process and system measurements during the
+	// benchmark. A nil value disables live resource collection.
+	ResourceCollection *ResourceCollectionConfig
 
 	HealthAddress string
 
@@ -51,6 +54,15 @@ func (c ServiceConfig) Validate() error {
 			"invalid benchmark suite configuration: %w",
 			err,
 		)
+	}
+
+	if c.ResourceCollection != nil {
+		if err := c.ResourceCollection.Validate(); err != nil {
+			return fmt.Errorf(
+				"invalid resource collection configuration: %w",
+				err,
+			)
+		}
 	}
 
 	if err := validateStatusThresholds(
@@ -164,7 +176,9 @@ func (s *Service) Run(
 
 			Environment: config.Environment,
 
-			Resources: config.Resources,
+			ResourceCollection: copyResourceCollectionConfig(
+				config.ResourceCollection,
+			),
 
 			HealthAddress: config.HealthAddress,
 
@@ -207,4 +221,16 @@ func benchmarkIDFromTime(
 		value.UTC().Format(
 			"20060102-150405",
 		)
+}
+
+func copyResourceCollectionConfig(
+	config *ResourceCollectionConfig,
+) *ResourceCollectionConfig {
+	if config == nil {
+		return nil
+	}
+
+	copied := *config
+
+	return &copied
 }

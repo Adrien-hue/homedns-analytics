@@ -7,47 +7,169 @@ cd "${PROJECT_ROOT}"
 
 RELEASE_ID="${RELEASE_ID:-$(date +%Y%m%d-%H%M%S)}"
 COMMIT_SHA="$(git rev-parse --short=12 HEAD)"
-ARCHIVE_PATH="${1:-/tmp/homedns-${RELEASE_ID}.tar.gz}"
+CREATED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
-if [[ -n "$(git status --porcelain)" ]]; then
-  echo "Error: the working tree is not clean." >&2
-  echo "Commit or discard changes before packaging a release." >&2
-  exit 1
-fi
+VERSION="${HOMEDNS_VERSION:-v0.2.0-rc2}"
 
-STAGING_DIR="$(mktemp -d)"
+DIST_DIR="${HOMEDNS_DIST_DIR:-${PROJECT_ROOT}/dns/dist}"
+
+ARCHIVE_PATH="${1:-${DIST_DIR}/homedns-${RELEASE_ID}.tar.gz}"
+
+DNS_BINARY_NAME="homedns-dns"
+DNS_BINARY_PATH="${DIST_DIR}/homedns-dns-linux-arm64"
+
+MODULE_PATH="github.com/Adrien-hue/homedns-analytics/dns"
+
+STAGING_DIR=""
 
 cleanup() {
-  rm -rf "${STAGING_DIR}"
+  if [[ -n "${STAGING_DIR}" ]]; then
+    rm -rf "${STAGING_DIR}"
+  fi
 }
 
-trap cleanup EXIT
+fail() {
+  echo "Error: $*" >&2
+  exit 1
+}
 
-mkdir -p \
-  "${STAGING_DIR}/scripts/benchmarks"
+require_command() {
+  local command_name="$1"
 
-# Current Sprint 01 runtime payload.
-cp "${PROJECT_ROOT}/Makefile" \
-  "${STAGING_DIR}/Makefile"
+  command -v "${command_name}" >/dev/null 2>&1 ||
+    fail "required command not found: ${command_name}"
+}
 
-cp -R "${PROJECT_ROOT}/scripts/benchmarks/." \
-  "${STAGING_DIR}/scripts/benchmarks/"
+validate_working_tree() {
+  if [[ -n "$(git status --porcelain)" ]]; then
+    fail "the working tree is not clean.
+Commit or discard changes before packaging a release."
+  fi
+}
 
-# Traceability without deploying the Git repository.
-cat > "${STAGING_DIR}/RELEASE" <<EOF
+build_dns_binary() {
+  echo "Building Linux ARM64 DNS binary..."
+
+  (
+    cd "${PROJECT_ROOT}/dns"
+
+    CGO_ENABLED=0 \
+    GOOS=linux \
+    GOARCH=arm64 \
+    go build \
+      -trimpath \
+      -ldflags="-s -w \
+        -X ${MODULE_PATH}/internal/version.Version=${VERSION} \
+        -X ${MODULE_PATH}/internal/version.Commit=${COMMIT_SHA} \
+        -X ${MODULE_PATH}/internal/version.BuildTime=${CREATED_AT}" \
+      -o "${DNS_BINARY_PATH}" \
+      ./cmd/homedns-dns
+  )
+}
+
+validate_dns_binary() {
+  [[ -f "${DNS_BINARY_PATH}" ]] ||
+    fail "DNS binary was not created: ${DNS_BINARY_PATH}"
+
+  [[ -x "${DNS_BINARY_PATH}" ]] ||
+    fail "DNS binary is not executable: ${DNS_BINARY_PATH}"
+
+  local file_output
+  file_output="$(file "${DNS_BINARY_PATH}")"
+
+  [[ "${file_output}" == *"ELF 64-bit"* ]] ||
+    fail "DNS binary is not a 64-bit ELF executable: ${file_output}"
+
+  [[ "${file_output}" == *"ARM aarch64"* ]] ||
+    fail "DNS binary is not built for ARM64: ${file_output}"
+
+  [[ "${file_output}" == *"statically linked"* ]] ||
+    fail "DNS binary is not statically linked: ${file_output}"
+}
+
+write_release_metadata() {
+  local destination="$1"
+
+  cat > "${destination}" <<EOF
 release_id=${RELEASE_ID}
+version=${VERSION}
 commit_sha=${COMMIT_SHA}
-created_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+created_at=${CREATED_AT}
+dns_binary=${DNS_BINARY_NAME}
 EOF
+}
 
-tar \
-  --create \
-  --gzip \
-  --file="${ARCHIVE_PATH}" \
-  --directory="${STAGING_DIR}" \
-  .
+create_archive() {
+  local staging_dir="$1"
 
-echo "Release package created"
-echo "Release ID: ${RELEASE_ID}"
-echo "Commit:     ${COMMIT_SHA}"
-echo "Archive:    ${ARCHIVE_PATH}"
+  mkdir -p \
+    "${staging_dir}/scripts/benchmarks"
+
+  install \
+    -m 0755 \
+    "${DNS_BINARY_PATH}" \
+    "${staging_dir}/${DNS_BINARY_NAME}"
+
+  install \
+    -m 0644 \
+    "${PROJECT_ROOT}/Makefile" \
+    "${staging_dir}/Makefile"
+
+  cp -R \
+    "${PROJECT_ROOT}/scripts/benchmarks/." \
+    "${staging_dir}/scripts/benchmarks/"
+
+  write_release_metadata \
+    "${staging_dir}/RELEASE"
+
+  tar \
+    --create \
+    --gzip \
+    --file="${ARCHIVE_PATH}" \
+    --directory="${staging_dir}" \
+    .
+}
+
+validate_archive() {
+  tar -tzf "${ARCHIVE_PATH}" >/dev/null ||
+    fail "release archive is invalid: ${ARCHIVE_PATH}"
+
+  for required_path in \
+    "./RELEASE" \
+    "./Makefile" \
+    "./homedns-dns" \
+    "./scripts/benchmarks/benchmark.sh" \
+    "./scripts/benchmarks/collect-baseline.sh"; do
+    tar -tzf "${ARCHIVE_PATH}" |
+      grep -qx "${required_path}" ||
+      fail "release archive is missing ${required_path}"
+  done
+}
+
+main() {
+  require_command git
+  require_command go
+  require_command file
+  require_command tar
+
+  validate_working_tree
+
+  mkdir -p "${DIST_DIR}"
+
+  STAGING_DIR="$(mktemp -d)"
+  trap cleanup EXIT
+
+  build_dns_binary
+  validate_dns_binary
+  create_archive "${STAGING_DIR}"
+  validate_archive
+
+  echo
+  echo "Release package created"
+  echo "Release ID: ${RELEASE_ID}"
+  echo "Version:    ${VERSION}"
+  echo "Commit:     ${COMMIT_SHA}"
+  echo "Archive:    ${ARCHIVE_PATH}"
+}
+
+main "$@"

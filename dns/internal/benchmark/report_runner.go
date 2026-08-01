@@ -30,7 +30,10 @@ type ReportRunConfig struct {
 	BenchmarkBinary BenchmarkBinaryMetadata
 	TargetService   TargetServiceMetadata
 	Environment     Environment
-	Resources       ResourceSummary
+
+	// ResourceCollection enables live process and system measurements while
+	// the benchmark suite executes. A nil value disables collection.
+	ResourceCollection *ResourceCollectionConfig
 
 	HealthAddress string
 
@@ -40,7 +43,9 @@ type ReportRunConfig struct {
 // Validate verifies the report execution configuration.
 func (c ReportRunConfig) Validate() error {
 	if c.ID == "" {
-		return errors.New("benchmark ID is required")
+		return errors.New(
+			"benchmark ID is required",
+		)
 	}
 
 	if err := ValidateProfile(
@@ -53,7 +58,9 @@ func (c ReportRunConfig) Validate() error {
 	}
 
 	if c.Profile == "" {
-		return errors.New("benchmark profile is required")
+		return errors.New(
+			"benchmark profile is required",
+		)
 	}
 
 	if err := c.Suite.Validate(); err != nil {
@@ -63,8 +70,19 @@ func (c ReportRunConfig) Validate() error {
 		)
 	}
 
+	if c.ResourceCollection != nil {
+		if err := c.ResourceCollection.Validate(); err != nil {
+			return fmt.Errorf(
+				"invalid resource collection configuration: %w",
+				err,
+			)
+		}
+	}
+
 	if err := validateStatusThresholds(
-		resolvedStatusThresholds(c.StatusThresholds),
+		resolvedStatusThresholds(
+			c.StatusThresholds,
+		),
 	); err != nil {
 		return fmt.Errorf(
 			"invalid benchmark status thresholds: %w",
@@ -84,15 +102,17 @@ type suiteExecutor interface {
 
 // ReportRunner executes a benchmark suite and assembles the canonical report.
 type ReportRunner struct {
-	suiteRunner suiteExecutor
-	now         func() time.Time
+	suiteRunner       suiteExecutor
+	resourceCollector ResourceCollector
+	now               func() time.Time
 }
 
 // NewReportRunner creates a report runner using the default benchmark suite.
 func NewReportRunner() *ReportRunner {
 	return &ReportRunner{
-		suiteRunner: NewSuiteRunner(),
-		now:         time.Now,
+		suiteRunner:       NewSuiteRunner(),
+		resourceCollector: NewResourceCollector(),
+		now:               time.Now,
 	}
 }
 
@@ -127,44 +147,144 @@ func (r *ReportRunner) Run(
 	}
 
 	startedAt := r.now()
-	report := NewReport(config.ID, startedAt)
-
-	applyReportMetadata(&report, config)
-
-	scenarios, err := r.suiteRunner.Run(
-		ctx,
-		config.Suite,
+	report := NewReport(
+		config.ID,
+		startedAt,
 	)
-	if err != nil {
+
+	applyReportMetadata(
+		&report,
+		config,
+	)
+
+	var (
+		scenarios []ScenarioResult
+		suiteErr  error
+	)
+
+	if config.ResourceCollection == nil {
+		scenarios, suiteErr =
+			r.suiteRunner.Run(
+				ctx,
+				config.Suite,
+			)
+	} else {
+		if r.resourceCollector == nil {
+			return Report{}, errors.New(
+				"benchmark resource collector is not initialized",
+			)
+		}
+
+		collectionResult, collectionErr :=
+			r.resourceCollector.Collect(
+				ctx,
+				*config.ResourceCollection,
+				func(
+					runContext context.Context,
+				) error {
+					scenarios, suiteErr =
+						r.suiteRunner.Run(
+							runContext,
+							config.Suite,
+						)
+
+					return suiteErr
+				},
+			)
+
+		// Preserve the suite execution error contract. A suite failure should
+		// remain a benchmark-suite error rather than being reported as a
+		// resource-collection failure.
+		if suiteErr != nil {
+			return Report{}, fmt.Errorf(
+				"run benchmark suite: %w",
+				suiteErr,
+			)
+		}
+
+		if collectionErr != nil {
+			return Report{}, fmt.Errorf(
+				"collect benchmark resources: %w",
+				collectionErr,
+			)
+		}
+
+		report.Resources =
+			BuildResourceSummary(
+				collectionResult,
+				config.
+					ResourceCollection.
+					Interval,
+			)
+	}
+
+	if suiteErr != nil {
 		return Report{}, fmt.Errorf(
 			"run benchmark suite: %w",
-			err,
+			suiteErr,
 		)
 	}
 
-	thresholds := report.Configuration.StatusThresholds
+	thresholds :=
+		report.
+			Configuration.
+			StatusThresholds
 
-	report.Scenarios = classifyScenarios(
-		scenarios,
-		thresholds,
+	report.Scenarios =
+		classifyScenarios(
+			scenarios,
+			thresholds,
+		)
+
+	report.Complete(
+		r.now(),
 	)
 
-	report.Complete(r.now())
+	report.Summary =
+		summarizeScenarios(
+			report.Scenarios,
+			report.
+				Execution.
+				DurationMilliseconds,
+		)
 
-	report.Summary = summarizeScenarios(
-		report.Scenarios,
-		report.Execution.DurationMilliseconds,
-	)
+	report.
+		Summary.
+		Stability.
+		ServiceRestartDetected =
+		report.
+			Resources.
+			TargetService.
+			RestartDetected
 
-	report.Report.Status = report.Summary.Status
-	report.Report.StatusReasons = append(
-		report.Report.StatusReasons,
-		report.Summary.StatusReasons...,
-	)
-	report.Report.Notes = append(
-		report.Report.Notes,
-		report.Summary.Notes...,
-	)
+	report.
+		Summary.
+		Stability.
+		ThermalThrottlingDetected =
+		report.
+			Resources.
+			System.
+			Throttling.
+			ObservedDuringRun
+
+	report.Report.Status =
+		report.Summary.Status
+
+	report.Report.StatusReasons =
+		append(
+			report.Report.StatusReasons,
+			report.
+				Summary.
+				StatusReasons...,
+		)
+
+	report.Report.Notes =
+		append(
+			report.Report.Notes,
+			report.
+				Summary.
+				Notes...,
+		)
 
 	return report, nil
 }
@@ -177,7 +297,8 @@ func applyReportMetadata(
 		return
 	}
 
-	report.BenchmarkBinary = config.BenchmarkBinary
+	report.BenchmarkBinary =
+		config.BenchmarkBinary
 
 	if report.BenchmarkBinary.Project == "" {
 		report.BenchmarkBinary.Project =
@@ -189,7 +310,8 @@ func applyReportMetadata(
 			"homedns-dns"
 	}
 
-	report.TargetService = config.TargetService
+	report.TargetService =
+		config.TargetService
 
 	if report.TargetService.Address == "" {
 		report.TargetService.Address =
@@ -201,19 +323,27 @@ func applyReportMetadata(
 			config.HealthAddress
 	}
 
-	report.Environment = config.Environment
-	report.Resources = config.Resources
+	report.Environment =
+		config.Environment
 
-	if report.Resources.Sampling.Errors == nil {
-		report.Resources.Sampling.Errors =
-			make([]string, 0)
+	var resourceIntervalMilliseconds int64
+
+	if config.ResourceCollection != nil {
+		resourceIntervalMilliseconds =
+			config.
+				ResourceCollection.
+				Interval.
+				Milliseconds()
 	}
 
-	thresholds := resolvedStatusThresholds(
-		config.StatusThresholds,
-	)
+	thresholds :=
+		resolvedStatusThresholds(
+			config.StatusThresholds,
+		)
 
-	scenarios := config.Suite.Scenarios()
+	scenarios :=
+		config.Suite.Scenarios()
+
 	scenarioOrder := make(
 		[]string,
 		0,
@@ -228,23 +358,29 @@ func applyReportMetadata(
 	}
 
 	report.Configuration = Configuration{
-		Profile:           config.Profile,
+		Profile: config.Profile,
+
 		ProfileCustomized: config.ProfileCustomized,
 
 		UpstreamAddress: config.Suite.DirectAddress,
-		HomeDNSAddress:  config.Suite.ForwardedAddress,
-		HealthAddress:   config.HealthAddress,
+
+		HomeDNSAddress: config.Suite.ForwardedAddress,
+
+		HealthAddress: config.HealthAddress,
 
 		QueryNames: append(
 			[]string(nil),
 			config.Suite.QueryNames...,
 		),
+
 		QueryType: queryTypeName(
 			config.Suite.QueryType,
 		),
 
-		WarmupQueries:     config.Suite.WarmupQueries,
-		QueriesPerPath:    config.Suite.QueryCount,
+		WarmupQueries: config.Suite.WarmupQueries,
+
+		QueriesPerPath: config.Suite.QueryCount,
+
 		ConcurrentWorkers: config.Suite.ConcurrentWorkers,
 
 		TimeoutSeconds: round(
@@ -252,11 +388,10 @@ func applyReportMetadata(
 			6,
 		),
 
-		ResourceIntervalMS: config.Resources.
-			Sampling.
-			IntervalMilliseconds,
+		ResourceIntervalMS: resourceIntervalMilliseconds,
 
-		ScenarioOrder:    scenarioOrder,
+		ScenarioOrder: scenarioOrder,
+
 		StatusThresholds: thresholds,
 	}
 }
@@ -333,7 +468,8 @@ func classifyScenarios(
 	)
 
 	for index := range scenarios {
-		results[index] = scenarios[index]
+		results[index] =
+			scenarios[index]
 
 		classifyScenario(
 			&results[index],
@@ -352,11 +488,14 @@ func classifyScenario(
 		return
 	}
 
-	scenario.Status = StatusPassed
-	scenario.StatusReasons = make(
-		[]StatusReason,
-		0,
-	)
+	scenario.Status =
+		StatusPassed
+
+	scenario.StatusReasons =
+		make(
+			[]StatusReason,
+			0,
+		)
 
 	classifyPath(
 		scenario,
@@ -380,20 +519,25 @@ func classifyPath(
 	thresholds StatusThresholds,
 ) {
 	if path.Requests.Attempted <= 0 {
-		scenario.Status = higherStatus(
-			scenario.Status,
-			StatusInvalid,
-		)
+		scenario.Status =
+			higherStatus(
+				scenario.Status,
+				StatusInvalid,
+			)
 
-		scenario.StatusReasons = append(
-			scenario.StatusReasons,
-			StatusReason{
-				Code:     "NO_REQUESTS_ATTEMPTED",
-				Scenario: scenario.Name,
-				Path:     pathName,
-				Message:  "path attempted no DNS queries",
-			},
-		)
+		scenario.StatusReasons =
+			append(
+				scenario.StatusReasons,
+				StatusReason{
+					Code: "NO_REQUESTS_ATTEMPTED",
+
+					Scenario: scenario.Name,
+
+					Path: pathName,
+
+					Message: "path attempted no DNS queries",
+				},
+			)
 
 		return
 	}
@@ -410,15 +554,17 @@ func classifyPath(
 		)
 
 	if failureReason != nil {
-		scenario.Status = higherStatus(
-			scenario.Status,
-			failureStatus,
-		)
+		scenario.Status =
+			higherStatus(
+				scenario.Status,
+				failureStatus,
+			)
 
-		scenario.StatusReasons = append(
-			scenario.StatusReasons,
-			*failureReason,
-		)
+		scenario.StatusReasons =
+			append(
+				scenario.StatusReasons,
+				*failureReason,
+			)
 	}
 
 	timeoutStatus, timeoutReason :=
@@ -433,15 +579,17 @@ func classifyPath(
 		)
 
 	if timeoutReason != nil {
-		scenario.Status = higherStatus(
-			scenario.Status,
-			timeoutStatus,
-		)
+		scenario.Status =
+			higherStatus(
+				scenario.Status,
+				timeoutStatus,
+			)
 
-		scenario.StatusReasons = append(
-			scenario.StatusReasons,
-			*timeoutReason,
-		)
+		scenario.StatusReasons =
+			append(
+				scenario.StatusReasons,
+				*timeoutReason,
+			)
 	}
 }
 
@@ -455,25 +603,45 @@ func classifyRate(
 	message string,
 ) (string, *StatusReason) {
 	if observed >= failedThreshold {
-		return StatusFailed, &StatusReason{
-			Code:      code,
-			Scenario:  scenarioName,
-			Path:      pathName,
-			Observed:  float64Pointer(observed),
-			Threshold: float64Pointer(failedThreshold),
-			Message:   message,
-		}
+		return StatusFailed,
+			&StatusReason{
+				Code: code,
+
+				Scenario: scenarioName,
+
+				Path: pathName,
+
+				Observed: float64Pointer(
+					observed,
+				),
+
+				Threshold: float64Pointer(
+					failedThreshold,
+				),
+
+				Message: message,
+			}
 	}
 
 	if observed >= degradedThreshold {
-		return StatusDegraded, &StatusReason{
-			Code:      code,
-			Scenario:  scenarioName,
-			Path:      pathName,
-			Observed:  float64Pointer(observed),
-			Threshold: float64Pointer(degradedThreshold),
-			Message:   message,
-		}
+		return StatusDegraded,
+			&StatusReason{
+				Code: code,
+
+				Scenario: scenarioName,
+
+				Path: pathName,
+
+				Observed: float64Pointer(
+					observed,
+				),
+
+				Threshold: float64Pointer(
+					degradedThreshold,
+				),
+
+				Message: message,
+			}
 	}
 
 	return StatusPassed, nil
@@ -483,23 +651,28 @@ func summarizeScenarios(
 	scenarios []ScenarioResult,
 	durationMilliseconds float64,
 ) BenchmarkSummary {
-	summary := newBenchmarkSummary()
+	summary :=
+		newBenchmarkSummary()
 
 	if len(scenarios) == 0 {
-		summary.Status = StatusInvalid
+		summary.Status =
+			StatusInvalid
 
-		summary.StatusReasons = append(
-			summary.StatusReasons,
-			StatusReason{
-				Code:    "NO_SCENARIOS_EXECUTED",
-				Message: "no benchmark scenarios were executed",
-			},
-		)
+		summary.StatusReasons =
+			append(
+				summary.StatusReasons,
+				StatusReason{
+					Code: "NO_SCENARIOS_EXECUTED",
 
-		summary.Notes = append(
-			summary.Notes,
-			"no benchmark scenarios were executed",
-		)
+					Message: "no benchmark scenarios were executed",
+				},
+			)
+
+		summary.Notes =
+			append(
+				summary.Notes,
+				"no benchmark scenarios were executed",
+			)
 
 		return summary
 	}
@@ -551,51 +724,58 @@ func summarizeScenarios(
 		)
 	}
 
-	summary.Rates = calculateRequestRates(
-		summary.Requests,
-	)
+	summary.Rates =
+		calculateRequestRates(
+			summary.Requests,
+		)
 
 	summary.
 		Reliability.
 		Direct.
-		Rates = calculateRequestRates(
-		summary.
-			Reliability.
-			Direct.
-			Requests,
-	)
+		Rates =
+		calculateRequestRates(
+			summary.
+				Reliability.
+				Direct.
+				Requests,
+		)
 
 	summary.
 		Reliability.
 		Forwarded.
-		Rates = calculateRequestRates(
-		summary.
-			Reliability.
-			Forwarded.
-			Requests,
-	)
+		Rates =
+		calculateRequestRates(
+			summary.
+				Reliability.
+				Forwarded.
+				Requests,
+		)
 
-	summary.Throughput = calculateSummaryThroughput(
-		summary.Requests,
-		durationMilliseconds,
-	)
+	summary.Throughput =
+		calculateSummaryThroughput(
+			summary.Requests,
+			durationMilliseconds,
+		)
 
-	summary.Status = summarizeScenarioStatuses(
-		summary.ScenarioResults,
-	)
+	summary.Status =
+		summarizeScenarioStatuses(
+			summary.ScenarioResults,
+		)
 
 	if summary.Requests.Failed > 0 {
-		summary.Notes = append(
-			summary.Notes,
-			"one or more DNS queries failed",
-		)
+		summary.Notes =
+			append(
+				summary.Notes,
+				"one or more DNS queries failed",
+			)
 	}
 
 	if summary.Requests.Timeouts > 0 {
-		summary.Notes = append(
-			summary.Notes,
-			"one or more DNS queries timed out",
-		)
+		summary.Notes =
+			append(
+				summary.Notes,
+				"one or more DNS queries timed out",
+			)
 	}
 
 	return summary
@@ -603,15 +783,38 @@ func summarizeScenarios(
 
 func newBenchmarkSummary() BenchmarkSummary {
 	return BenchmarkSummary{
-		Status:        StatusUnknown,
-		StatusReasons: make([]StatusReason, 0),
-		Notes:         make([]string, 0),
+		Status: StatusUnknown,
+
+		StatusReasons: make(
+			[]StatusReason,
+			0,
+		),
+
+		Notes: make(
+			[]string,
+			0,
+		),
 
 		ScenarioResults: ScenarioStatusSummary{
-			Passed:   make([]string, 0),
-			Degraded: make([]string, 0),
-			Failed:   make([]string, 0),
-			Invalid:  make([]string, 0),
+			Passed: make(
+				[]string,
+				0,
+			),
+
+			Degraded: make(
+				[]string,
+				0,
+			),
+
+			Failed: make(
+				[]string,
+				0,
+			),
+
+			Invalid: make(
+				[]string,
+				0,
+			),
 		},
 	}
 }
@@ -624,10 +827,18 @@ func accumulatePathSummary(
 		return
 	}
 
-	total.Attempted += path.Attempted
-	total.Successful += path.Successful
-	total.Failed += path.Failed
-	total.Timeouts += path.Timeouts
+	total.Attempted +=
+		path.Attempted
+
+	total.Successful +=
+		path.Successful
+
+	total.Failed +=
+		path.Failed
+
+	total.Timeouts +=
+		path.Timeouts
+
 	total.NonTimeoutFailures +=
 		path.NonTimeoutFailures
 }
@@ -640,35 +851,56 @@ func accumulateScenarioStatus(
 		return
 	}
 
-	summary.StatusReasons = append(
-		summary.StatusReasons,
-		scenario.StatusReasons...,
-	)
+	summary.StatusReasons =
+		append(
+			summary.StatusReasons,
+			scenario.StatusReasons...,
+		)
 
 	switch scenario.Status {
 	case StatusPassed:
-		summary.ScenarioResults.Passed = append(
-			summary.ScenarioResults.Passed,
-			scenario.Name,
-		)
+		summary.
+			ScenarioResults.
+			Passed =
+			append(
+				summary.
+					ScenarioResults.
+					Passed,
+				scenario.Name,
+			)
 
 	case StatusDegraded:
-		summary.ScenarioResults.Degraded = append(
-			summary.ScenarioResults.Degraded,
-			scenario.Name,
-		)
+		summary.
+			ScenarioResults.
+			Degraded =
+			append(
+				summary.
+					ScenarioResults.
+					Degraded,
+				scenario.Name,
+			)
 
 	case StatusFailed:
-		summary.ScenarioResults.Failed = append(
-			summary.ScenarioResults.Failed,
-			scenario.Name,
-		)
+		summary.
+			ScenarioResults.
+			Failed =
+			append(
+				summary.
+					ScenarioResults.
+					Failed,
+				scenario.Name,
+			)
 
 	default:
-		summary.ScenarioResults.Invalid = append(
-			summary.ScenarioResults.Invalid,
-			scenario.Name,
-		)
+		summary.
+			ScenarioResults.
+			Invalid =
+			append(
+				summary.
+					ScenarioResults.
+					Invalid,
+				scenario.Name,
+			)
 	}
 }
 
@@ -721,25 +953,28 @@ func updateWorstScenario(
 		return
 	}
 
-	candidate := WorstScenarioSummary{
-		Name: scenarioName,
-		Path: pathName,
+	candidate :=
+		WorstScenarioSummary{
+			Name: scenarioName,
 
-		FailurePercent: path.Rates.FailurePercent,
+			Path: pathName,
 
-		TimeoutPercent: path.Rates.TimeoutPercent,
+			FailurePercent: path.Rates.FailurePercent,
 
-		P95SuccessfulLatencyMilliseconds: path.
-			SuccessfulRequestLatencyMilliseconds.
-			P95,
-	}
+			TimeoutPercent: path.Rates.TimeoutPercent,
+
+			P95SuccessfulLatencyMilliseconds: path.
+				SuccessfulRequestLatencyMilliseconds.
+				P95,
+		}
 
 	if summary.WorstScenario == nil ||
 		isWorseScenario(
 			candidate,
 			*summary.WorstScenario,
 		) {
-		summary.WorstScenario = &candidate
+		summary.WorstScenario =
+			&candidate
 	}
 }
 
@@ -777,7 +1012,9 @@ func higherStatus(
 	return current
 }
 
-func statusSeverity(status string) int {
+func statusSeverity(
+	status string,
+) int {
 	switch status {
 	case StatusPassed:
 		return 1
@@ -796,14 +1033,16 @@ func statusSeverity(status string) int {
 	}
 }
 
-func float64Pointer(value float64) *float64 {
-	return &value
-}
-
-func queryTypeName(queryType uint16) string {
-	if name, ok := dns.TypeToString[queryType]; ok {
+func queryTypeName(
+	queryType uint16,
+) string {
+	if name, ok :=
+		dns.TypeToString[queryType]; ok {
 		return name
 	}
 
-	return fmt.Sprintf("TYPE%d", queryType)
+	return fmt.Sprintf(
+		"TYPE%d",
+		queryType,
+	)
 }

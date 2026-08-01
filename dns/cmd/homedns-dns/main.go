@@ -109,7 +109,9 @@ func runServer(
 		return exitInvalidArgs
 	}
 
-	cfg, err := config.Load(*configPath)
+	cfg, err := config.Load(
+		*configPath,
+	)
 	if err != nil {
 		fmt.Fprintf(
 			stderr,
@@ -257,13 +259,21 @@ func runBenchmark(
 
 	options := app.DefaultBenchmarkOptions()
 
-	options.Profile = profile.Name
+	options.ConfigPath =
+		*configPath
+
+	options.Profile =
+		profile.Name
+
 	options.OutputDirectory =
 		*outputDirectory
+
 	options.QueryCount =
 		profile.QueryCount
+
 	options.WarmupQueries =
 		profile.WarmupQueries
+
 	options.ConcurrentWorkers =
 		profile.ConcurrentWorkers
 
@@ -317,15 +327,15 @@ func runBenchmark(
 	}
 
 	if explicitFlags["query-type"] {
-		queryType, err :=
+		queryType, parseErr :=
 			parseBenchmarkQueryType(
 				*queryTypeName,
 			)
-		if err != nil {
+		if parseErr != nil {
 			fmt.Fprintf(
 				stderr,
 				"invalid benchmark query type: %v\n",
-				err,
+				parseErr,
 			)
 
 			return exitInvalidArgs
@@ -339,15 +349,15 @@ func runBenchmark(
 	}
 
 	if explicitFlags["domains"] {
-		queryNames, err :=
+		queryNames, parseErr :=
 			parseBenchmarkDomains(
 				*domains,
 			)
-		if err != nil {
+		if parseErr != nil {
 			fmt.Fprintf(
 				stderr,
 				"invalid benchmark domains: %v\n",
-				err,
+				parseErr,
 			)
 
 			return exitInvalidArgs
@@ -483,6 +493,12 @@ func runBenchmark(
 		stdout,
 		"Timeout: %s\n",
 		effectiveTimeout,
+	)
+
+	fmt.Fprintf(
+		stdout,
+		"Resource sampling: %s\n",
+		options.ResourceSamplingInterval,
 	)
 
 	fmt.Fprintf(
@@ -630,7 +646,9 @@ func parseBenchmarkDomains(
 
 	for index, part := range parts {
 		queryName :=
-			strings.TrimSpace(part)
+			strings.TrimSpace(
+				part,
+			)
 
 		if queryName == "" {
 			return nil, fmt.Errorf(
