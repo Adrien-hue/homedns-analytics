@@ -178,18 +178,30 @@ restart_service() {
 
 wait_for_health() {
   local attempt
+  local response
 
   for ((attempt = 1; attempt <= HEALTH_ATTEMPTS; attempt++)); do
-    if curl \
-      --fail \
-      --silent \
-      --show-error \
-      --max-time 2 \
-      "${HEALTH_URL}" >/dev/null; then
+    response="$(
+      curl \
+        --fail \
+        --silent \
+        --max-time 2 \
+        "${HEALTH_URL}" \
+        2>/dev/null
+    )" || response=""
+
+    if [[ -n "${response}" ]] &&
+      grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"' \
+        <<<"${response}" &&
+      grep -Eq '"ready"[[:space:]]*:[[:space:]]*true' \
+        <<<"${response}"; then
+      echo "Health check passed after ${attempt} attempt(s)."
       return 0
     fi
 
-    sleep "${HEALTH_DELAY_SECONDS}"
+    if ((attempt < HEALTH_ATTEMPTS)); then
+      sleep "${HEALTH_DELAY_SECONDS}"
+    fi
   done
 
   return 1
