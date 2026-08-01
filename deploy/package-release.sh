@@ -13,9 +13,7 @@ VERSION="${HOMEDNS_VERSION:-v0.2.0-rc2}"
 
 DIST_DIR="${HOMEDNS_DIST_DIR:-${PROJECT_ROOT}/dns/dist}"
 
-ARCHIVE_PATH="${
-  1:-${DIST_DIR}/homedns-${RELEASE_ID}.tar.gz
-}"
+ARCHIVE_PATH="${1:-${DIST_DIR}/homedns-${RELEASE_ID}.tar.gz}"
 
 DNS_BINARY_NAME="homedns-dns"
 DNS_BINARY_PATH="${DIST_DIR}/homedns-dns-linux-arm64"
