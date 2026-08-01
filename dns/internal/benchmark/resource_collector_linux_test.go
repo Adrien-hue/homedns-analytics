@@ -38,7 +38,7 @@ func TestLinuxResourceCollectorReadProcessStat(
 
 			return []byte(
 				"123 (homedns-dns worker) " +
-					"S 1 2 3 4 5 6 7 8 9 10 11 " +
+					"S 1 2 3 4 5 6 7 8 9 10 " +
 					"120 340 0 0 0\n",
 			), nil
 		},
@@ -92,13 +92,13 @@ func TestLinuxResourceCollectorReadProcessStatRejectsInvalidContent(
 		{
 			name: "invalid user ticks",
 			content: "123 (homedns-dns) " +
-				"S 1 2 3 4 5 6 7 8 9 10 11 nope 340",
+				"S 1 2 3 4 5 6 7 8 9 10 nope 340",
 			expectedError: "parse user CPU ticks",
 		},
 		{
 			name: "invalid system ticks",
 			content: "123 (homedns-dns) " +
-				"S 1 2 3 4 5 6 7 8 9 10 11 120 nope",
+				"S 1 2 3 4 5 6 7 8 9 10 120 nope",
 			expectedError: "parse system CPU ticks",
 		},
 	}
@@ -1635,7 +1635,7 @@ func processStatFixture(
 	systemTicks uint64,
 ) string {
 	return fmt.Sprintf(
-		"%d (%s) S 1 2 3 4 5 6 7 8 9 10 11 %d %d 0 0 0\n",
+		"%d (%s) S 1 2 3 4 5 6 7 8 9 10 %d %d 0 0 0\n",
 		pid,
 		name,
 		userTicks,
