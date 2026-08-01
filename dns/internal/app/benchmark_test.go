@@ -123,6 +123,13 @@ func TestDefaultBenchmarkOptions(
 
 	options := DefaultBenchmarkOptions()
 
+	if options.ConfigPath != "" {
+		t.Fatalf(
+			"default config path should be empty, got %q",
+			options.ConfigPath,
+		)
+	}
+
 	if options.Profile !=
 		DefaultBenchmarkProfile {
 		t.Fatalf(
@@ -309,6 +316,7 @@ func TestBenchmarkOptionsValidate(
 	t.Parallel()
 
 	options := DefaultBenchmarkOptions()
+	options.ConfigPath = "config.example.yaml"
 	options.Timeout = 3 * time.Second
 
 	if err := options.Validate(); err != nil {
@@ -325,6 +333,7 @@ func TestBenchmarkOptionsValidateAcceptsAAAA(
 	t.Parallel()
 
 	options := DefaultBenchmarkOptions()
+	options.ConfigPath = "config.example.yaml"
 	options.Timeout = 3 * time.Second
 	options.QueryType = dns.TypeAAAA
 
@@ -354,6 +363,15 @@ func TestBenchmarkOptionsValidateRejectsInvalidOptions(
 				options.Profile = "unknown"
 			},
 			expectedError: "unsupported benchmark profile",
+		},
+		{
+			name: "missing configuration path",
+			mutate: func(
+				options *BenchmarkOptions,
+			) {
+				options.ConfigPath = ""
+			},
+			expectedError: "benchmark configuration path is required",
 		},
 		{
 			name: "missing output directory",
@@ -449,8 +467,10 @@ func TestBenchmarkOptionsValidateRejectsInvalidOptions(
 			func(t *testing.T) {
 				t.Parallel()
 
-				options :=
-					DefaultBenchmarkOptions()
+				options := DefaultBenchmarkOptions()
+
+				options.ConfigPath =
+					"config.example.yaml"
 
 				options.Timeout =
 					3 * time.Second

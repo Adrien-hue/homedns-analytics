@@ -34,6 +34,7 @@ type BenchmarkOptions struct {
 	Profile           string
 	ProfileCustomized bool
 
+	ConfigPath      string
 	OutputDirectory string
 
 	QueryCount        int
@@ -43,6 +44,8 @@ type BenchmarkOptions struct {
 	// A zero timeout means the value should be inherited from the DNS service
 	// configuration.
 	Timeout time.Duration
+
+	ResourceSamplingInterval time.Duration
 
 	QueryNames []string
 	QueryType  uint16
@@ -77,6 +80,8 @@ func DefaultBenchmarkOptions() BenchmarkOptions {
 
 		ConcurrentWorkers: profile.ConcurrentWorkers,
 
+		ResourceSamplingInterval: benchmark.DefaultResourceSamplingInterval,
+
 		QueryNames: []string{
 			"example.com.",
 			"cloudflare.com.",
@@ -104,6 +109,11 @@ func (o BenchmarkOptions) Resolve(
 		o.Timeout = cfg.Upstream.Timeout
 	}
 
+	if o.ResourceSamplingInterval == 0 {
+		o.ResourceSamplingInterval =
+			benchmark.DefaultResourceSamplingInterval
+	}
+
 	return o
 }
 
@@ -113,6 +123,12 @@ func (o BenchmarkOptions) Validate() error {
 		o.Profile,
 	); err != nil {
 		return err
+	}
+
+	if strings.TrimSpace(o.ConfigPath) == "" {
+		return errors.New(
+			"benchmark configuration path is required",
+		)
 	}
 
 	if o.OutputDirectory == "" {
@@ -150,6 +166,12 @@ func (o BenchmarkOptions) Validate() error {
 	if o.Timeout <= 0 {
 		return errors.New(
 			"benchmark timeout must be greater than zero",
+		)
+	}
+
+	if o.ResourceSamplingInterval <= 0 {
+		return errors.New(
+			"benchmark resource sampling interval must be greater than zero",
 		)
 	}
 
@@ -197,7 +219,9 @@ func RunBenchmark(
 ) (benchmark.ServiceResult, error) {
 	if ctx == nil {
 		return benchmark.ServiceResult{},
-			errors.New("benchmark context is required")
+			errors.New(
+				"benchmark context is required",
+			)
 	}
 
 	options = options.Resolve(cfg)
@@ -251,6 +275,30 @@ func RunBenchmark(
 			)
 	}
 
+	targetPID, err := resolveBenchmarkTargetPID(
+		options.ConfigPath,
+	)
+	if err != nil {
+		return benchmark.ServiceResult{},
+			fmt.Errorf(
+				"resolve benchmark target process: %w",
+				err,
+			)
+	}
+
+	var resourceCollection *benchmark.ResourceCollectionConfig
+
+	if targetPID > 0 {
+		resourceCollection =
+			&benchmark.ResourceCollectionConfig{
+				BenchmarkPID: os.Getpid(),
+
+				TargetPID: targetPID,
+
+				Interval: options.ResourceSamplingInterval,
+			}
+	}
+
 	service := benchmark.NewService()
 
 	result, err := service.Run(
@@ -265,17 +313,22 @@ func RunBenchmark(
 			Suite: suite,
 
 			BenchmarkBinary: benchmark.BenchmarkBinaryMetadata{
-				Project:   "homedns-analytics",
+				Project: "homedns-analytics",
+
 				Component: "homedns-dns",
 
-				Version:        version.Version,
-				GitCommit:      version.Commit,
-				GoVersion:      runtime.Version(),
+				Version: version.Version,
+
+				GitCommit: version.Commit,
+
+				GoVersion: runtime.Version(),
+
 				BuildTimestamp: version.BuildTime,
 			},
 
 			TargetService: benchmark.TargetServiceMetadata{
-				Address:       cfg.DNSAddress(),
+				Address: cfg.DNSAddress(),
+
 				HealthAddress: cfg.HealthAddress(),
 			},
 
@@ -288,6 +341,8 @@ func RunBenchmark(
 
 				LogicalCPUs: runtime.NumCPU(),
 			},
+
+			ResourceCollection: resourceCollection,
 
 			HealthAddress: cfg.HealthAddress(),
 		},
@@ -319,7 +374,9 @@ func normalizeBenchmarkQueryNames(
 	)
 
 	for index, queryName := range queryNames {
-		queryName = strings.TrimSpace(queryName)
+		queryName = strings.TrimSpace(
+			queryName,
+		)
 
 		if queryName == "" {
 			return nil, fmt.Errorf(

@@ -54,6 +54,10 @@ func validServiceConfig() ServiceConfig {
 	reportConfig := validReportRunConfig()
 
 	return ServiceConfig{
+		Profile: DefaultProfile,
+
+		ProfileCustomized: false,
+
 		OutputDirectory: "benchmarks/runs",
 
 		Suite: reportConfig.Suite,
@@ -64,19 +68,19 @@ func validServiceConfig() ServiceConfig {
 
 		Environment: reportConfig.Environment,
 
-		Resources: reportConfig.Resources,
+		ResourceCollection: copyResourceCollectionConfig(
+			reportConfig.ResourceCollection,
+		),
 
 		HealthAddress: reportConfig.HealthAddress,
 
 		StatusThresholds: reportConfig.StatusThresholds,
-
-		Profile: DefaultProfile,
-
-		ProfileCustomized: false,
 	}
 }
 
-func TestServiceRun(t *testing.T) {
+func TestServiceRun(
+	t *testing.T,
+) {
 	t.Parallel()
 
 	currentTime := time.Date(
@@ -102,11 +106,14 @@ func TestServiceRun(t *testing.T) {
 		report: expectedReport,
 	}
 
-	reportWriter := &recordedReportWriter{}
+	reportWriter :=
+		&recordedReportWriter{}
 
 	service := &Service{
 		reportRunner: reportRunner,
-		writeReport:  reportWriter.Write,
+
+		writeReport: reportWriter.Write,
+
 		now: func() time.Time {
 			return currentTime
 		},
@@ -127,19 +134,36 @@ func TestServiceRun(t *testing.T) {
 
 	if len(reportRunner.configs) != 1 {
 		t.Fatalf(
-			"unexpected report execution count: got %d, want %d",
+			"unexpected report execution count: got %d, want 1",
 			len(reportRunner.configs),
-			1,
 		)
 	}
 
-	runConfig := reportRunner.configs[0]
+	runConfig :=
+		reportRunner.configs[0]
 
 	if runConfig.ID !=
 		"benchmark-20260728-183422" {
 		t.Fatalf(
 			"unexpected benchmark ID: got %q",
 			runConfig.ID,
+		)
+	}
+
+	if runConfig.Profile != config.Profile {
+		t.Fatalf(
+			"unexpected profile: got %q, want %q",
+			runConfig.Profile,
+			config.Profile,
+		)
+	}
+
+	if runConfig.ProfileCustomized !=
+		config.ProfileCustomized {
+		t.Fatalf(
+			"unexpected profile customization value: got %t, want %t",
+			runConfig.ProfileCustomized,
+			config.ProfileCustomized,
 		)
 	}
 
@@ -182,16 +206,11 @@ func TestServiceRun(t *testing.T) {
 		)
 	}
 
-	if runConfig.Resources.
-		Sampling.
-		IntervalMilliseconds !=
-		config.Resources.
-			Sampling.
-			IntervalMilliseconds {
-		t.Fatal(
-			"resource metadata was not forwarded",
-		)
-	}
+	assertResourceCollectionForwarded(
+		t,
+		runConfig.ResourceCollection,
+		config.ResourceCollection,
+	)
 
 	if runConfig.HealthAddress !=
 		config.HealthAddress {
@@ -224,13 +243,13 @@ func TestServiceRun(t *testing.T) {
 
 	if len(reportWriter.paths) != 1 {
 		t.Fatalf(
-			"unexpected report write count: got %d, want %d",
+			"unexpected report write count: got %d, want 1",
 			len(reportWriter.paths),
-			1,
 		)
 	}
 
-	if reportWriter.paths[0] != expectedPath {
+	if reportWriter.paths[0] !=
+		expectedPath {
 		t.Fatalf(
 			"unexpected written path: got %q, want %q",
 			reportWriter.paths[0],
@@ -240,9 +259,8 @@ func TestServiceRun(t *testing.T) {
 
 	if len(reportWriter.reports) != 1 {
 		t.Fatalf(
-			"unexpected written report count: got %d, want %d",
+			"unexpected written report count: got %d, want 1",
 			len(reportWriter.reports),
-			1,
 		)
 	}
 
@@ -261,6 +279,131 @@ func TestServiceRun(t *testing.T) {
 	}
 }
 
+func TestServiceCopiesResourceCollectionConfig(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	reportRunner := &recordedReportRunner{
+		report: NewReport(
+			"benchmark-copy",
+			time.Now(),
+		),
+	}
+
+	service := &Service{
+		reportRunner: reportRunner,
+
+		writeReport: func(
+			string,
+			Report,
+		) error {
+			return nil
+		},
+
+		now: time.Now,
+	}
+
+	config := validServiceConfig()
+
+	originalInterval :=
+		config.ResourceCollection.Interval
+
+	_, err := service.Run(
+		context.Background(),
+		config,
+	)
+	if err != nil {
+		t.Fatalf(
+			"run benchmark service: %v",
+			err,
+		)
+	}
+
+	if len(reportRunner.configs) != 1 {
+		t.Fatalf(
+			"unexpected report execution count: got %d, want 1",
+			len(reportRunner.configs),
+		)
+	}
+
+	forwarded :=
+		reportRunner.
+			configs[0].
+			ResourceCollection
+
+	if forwarded == nil {
+		t.Fatal(
+			"resource collection configuration was not forwarded",
+		)
+	}
+
+	forwarded.Interval =
+		2 * time.Second
+
+	if config.ResourceCollection.Interval !=
+		originalInterval {
+		t.Fatal(
+			"service shared resource collection storage with report config",
+		)
+	}
+}
+
+func TestServiceSupportsDisabledResourceCollection(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	reportRunner := &recordedReportRunner{
+		report: NewReport(
+			"benchmark-no-resources",
+			time.Now(),
+		),
+	}
+
+	service := &Service{
+		reportRunner: reportRunner,
+
+		writeReport: func(
+			string,
+			Report,
+		) error {
+			return nil
+		},
+
+		now: time.Now,
+	}
+
+	config := validServiceConfig()
+	config.ResourceCollection = nil
+
+	_, err := service.Run(
+		context.Background(),
+		config,
+	)
+	if err != nil {
+		t.Fatalf(
+			"run benchmark service: %v",
+			err,
+		)
+	}
+
+	if len(reportRunner.configs) != 1 {
+		t.Fatalf(
+			"unexpected report execution count: got %d, want 1",
+			len(reportRunner.configs),
+		)
+	}
+
+	if reportRunner.
+		configs[0].
+		ResourceCollection != nil {
+		t.Fatal(
+			"disabled resource collection was unexpectedly enabled",
+		)
+	}
+}
+
 func TestServiceReturnsReportRunnerError(
 	t *testing.T,
 ) {
@@ -268,8 +411,11 @@ func TestServiceReturnsReportRunnerError(
 
 	service := &Service{
 		reportRunner: &recordedReportRunner{
-			err: errors.New("report failed"),
+			err: errors.New(
+				"report failed",
+			),
 		},
+
 		writeReport: func(
 			string,
 			Report,
@@ -280,6 +426,7 @@ func TestServiceReturnsReportRunnerError(
 
 			return nil
 		},
+
 		now: time.Now,
 	}
 
@@ -316,6 +463,7 @@ func TestServiceReturnsReportWriterError(
 				time.Now(),
 			),
 		},
+
 		writeReport: func(
 			string,
 			Report,
@@ -324,6 +472,7 @@ func TestServiceReturnsReportWriterError(
 				"write failed",
 			)
 		},
+
 		now: time.Now,
 	}
 
@@ -354,67 +503,143 @@ func TestServiceRejectsInvalidConfiguration(
 	t.Parallel()
 
 	tests := []struct {
-		name   string
-		mutate func(*ServiceConfig)
+		name          string
+		mutate        func(*ServiceConfig)
+		expectedError string
 	}{
 		{
 			name: "missing output directory",
-			mutate: func(config *ServiceConfig) {
+
+			mutate: func(
+				config *ServiceConfig,
+			) {
 				config.OutputDirectory = ""
 			},
+
+			expectedError: "benchmark output directory is required",
 		},
 		{
 			name: "invalid suite",
-			mutate: func(config *ServiceConfig) {
+
+			mutate: func(
+				config *ServiceConfig,
+			) {
 				config.Suite.QueryCount = 0
 			},
+
+			expectedError: "invalid benchmark suite configuration",
+		},
+		{
+			name: "invalid resource benchmark PID",
+
+			mutate: func(
+				config *ServiceConfig,
+			) {
+				config.
+					ResourceCollection.
+					BenchmarkPID = 0
+			},
+
+			expectedError: "invalid resource collection configuration",
+		},
+		{
+			name: "invalid resource target PID",
+
+			mutate: func(
+				config *ServiceConfig,
+			) {
+				config.
+					ResourceCollection.
+					TargetPID = 0
+			},
+
+			expectedError: "invalid resource collection configuration",
+		},
+		{
+			name: "invalid resource interval",
+
+			mutate: func(
+				config *ServiceConfig,
+			) {
+				config.
+					ResourceCollection.
+					Interval = 0
+			},
+
+			expectedError: "invalid resource collection configuration",
 		},
 		{
 			name: "invalid status thresholds",
-			mutate: func(config *ServiceConfig) {
+
+			mutate: func(
+				config *ServiceConfig,
+			) {
 				config.StatusThresholds =
 					StatusThresholds{
 						DegradedFailurePercent: 10,
-						FailedFailurePercent:   5,
+
+						FailedFailurePercent: 5,
+
 						DegradedTimeoutPercent: 1,
-						FailedTimeoutPercent:   5,
+
+						FailedTimeoutPercent: 5,
 					}
 			},
+
+			expectedError: "invalid benchmark status thresholds",
 		},
 	}
 
 	for _, test := range tests {
 		test := test
 
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
+		t.Run(
+			test.name,
+			func(t *testing.T) {
+				t.Parallel()
 
-			config := validServiceConfig()
-			test.mutate(&config)
+				config :=
+					validServiceConfig()
 
-			service := &Service{
-				reportRunner: &recordedReportRunner{},
-
-				writeReport: func(
-					string,
-					Report,
-				) error {
-					return nil
-				},
-
-				now: time.Now,
-			}
-
-			_, err := service.Run(
-				context.Background(),
-				config,
-			)
-			if err == nil {
-				t.Fatal(
-					"expected invalid configuration to fail",
+				test.mutate(
+					&config,
 				)
-			}
-		})
+
+				service := &Service{
+					reportRunner: &recordedReportRunner{},
+
+					writeReport: func(
+						string,
+						Report,
+					) error {
+						return nil
+					},
+
+					now: time.Now,
+				}
+
+				_, err := service.Run(
+					context.Background(),
+					config,
+				)
+				if err == nil {
+					t.Fatal(
+						"expected invalid configuration to fail",
+					)
+				}
+
+				if !strings.Contains(
+					err.Error(),
+					test.expectedError,
+				) {
+					t.Fatalf(
+						"unexpected error: got %q, want it to contain %q",
+						err.Error(),
+						test.expectedError,
+					)
+				}
+			},
+		)
 	}
 }
 
@@ -472,7 +697,8 @@ func TestServiceRejectsMissingReportRunner(
 
 	service := &Service{
 		writeReport: WriteJSONFile,
-		now:         time.Now,
+
+		now: time.Now,
 	}
 
 	_, err := service.Run(
@@ -493,7 +719,8 @@ func TestServiceRejectsMissingReportWriter(
 
 	service := &Service{
 		reportRunner: &recordedReportRunner{},
-		now:          time.Now,
+
+		now: time.Now,
 	}
 
 	_, err := service.Run(
@@ -514,7 +741,8 @@ func TestServiceRejectsMissingClock(
 
 	service := &Service{
 		reportRunner: &recordedReportRunner{},
-		writeReport:  WriteJSONFile,
+
+		writeReport: WriteJSONFile,
 	}
 
 	_, err := service.Run(
@@ -528,7 +756,9 @@ func TestServiceRejectsMissingClock(
 	}
 }
 
-func TestBenchmarkIDFromTime(t *testing.T) {
+func TestBenchmarkIDFromTime(
+	t *testing.T,
+) {
 	t.Parallel()
 
 	value := time.Date(
@@ -545,8 +775,12 @@ func TestBenchmarkIDFromTime(t *testing.T) {
 		),
 	)
 
-	got := benchmarkIDFromTime(value)
-	want := "benchmark-20260728-201530"
+	got := benchmarkIDFromTime(
+		value,
+	)
+
+	want :=
+		"benchmark-20260728-201530"
 
 	if got != want {
 		t.Fatalf(
@@ -557,7 +791,9 @@ func TestBenchmarkIDFromTime(t *testing.T) {
 	}
 }
 
-func TestNewService(t *testing.T) {
+func TestNewService(
+	t *testing.T,
+) {
 	t.Parallel()
 
 	service := NewService()
@@ -625,7 +861,8 @@ func TestServiceRunForwardsProgressReporter(
 		),
 	}
 
-	reportWriter := &recordedReportWriter{}
+	reportWriter :=
+		&recordedReportWriter{}
 
 	currentTime := time.Date(
 		2026,
@@ -692,6 +929,118 @@ func TestServiceRunForwardsProgressReporter(
 	if !reporterCalled {
 		t.Fatal(
 			"forwarded progress reporter was not called",
+		)
+	}
+}
+
+func TestCopyResourceCollectionConfig(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	original := &ResourceCollectionConfig{
+		BenchmarkPID: 100,
+
+		TargetPID: 200,
+
+		Interval: time.Second,
+	}
+
+	copied :=
+		copyResourceCollectionConfig(
+			original,
+		)
+
+	if copied == nil {
+		t.Fatal(
+			"expected copied resource configuration",
+		)
+	}
+
+	if copied == original {
+		t.Fatal(
+			"resource configuration pointer was not copied",
+		)
+	}
+
+	if *copied != *original {
+		t.Fatalf(
+			"unexpected copied configuration: got %+v, want %+v",
+			*copied,
+			*original,
+		)
+	}
+
+	copied.Interval =
+		2 * time.Second
+
+	if original.Interval !=
+		time.Second {
+		t.Fatal(
+			"copy mutation affected original configuration",
+		)
+	}
+
+	if copyResourceCollectionConfig(nil) != nil {
+		t.Fatal(
+			"nil resource configuration should remain nil",
+		)
+	}
+}
+
+func assertResourceCollectionForwarded(
+	t *testing.T,
+	actual *ResourceCollectionConfig,
+	expected *ResourceCollectionConfig,
+) {
+	t.Helper()
+
+	if expected == nil {
+		if actual != nil {
+			t.Fatal(
+				"unexpected resource collection configuration",
+			)
+		}
+
+		return
+	}
+
+	if actual == nil {
+		t.Fatal(
+			"resource collection configuration was not forwarded",
+		)
+	}
+
+	if actual.BenchmarkPID !=
+		expected.BenchmarkPID {
+		t.Fatalf(
+			"unexpected benchmark PID: got %d, want %d",
+			actual.BenchmarkPID,
+			expected.BenchmarkPID,
+		)
+	}
+
+	if actual.TargetPID !=
+		expected.TargetPID {
+		t.Fatalf(
+			"unexpected target PID: got %d, want %d",
+			actual.TargetPID,
+			expected.TargetPID,
+		)
+	}
+
+	if actual.Interval !=
+		expected.Interval {
+		t.Fatalf(
+			"unexpected collection interval: got %s, want %s",
+			actual.Interval,
+			expected.Interval,
+		)
+	}
+
+	if actual == expected {
+		t.Fatal(
+			"resource collection config shares caller storage",
 		)
 	}
 }

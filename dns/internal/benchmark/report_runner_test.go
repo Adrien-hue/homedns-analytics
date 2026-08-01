@@ -25,6 +25,29 @@ func (r *recordedSuiteRunner) Run(
 	return r.results, r.err
 }
 
+type recordedResourceCollector struct {
+	called bool
+	config ResourceCollectionConfig
+	result ResourceCollectionResult
+	err    error
+}
+
+func (r *recordedResourceCollector) Collect(
+	ctx context.Context,
+	config ResourceCollectionConfig,
+	run func(context.Context) error,
+) (ResourceCollectionResult, error) {
+	r.called = true
+	r.config = config
+
+	runErr := run(ctx)
+	if runErr != nil {
+		return r.result, runErr
+	}
+
+	return r.result, r.err
+}
+
 func validReportRunConfig() ReportRunConfig {
 	dirty := true
 
@@ -78,11 +101,10 @@ func validReportRunConfig() ReportRunConfig {
 			LogicalCPUs:     4,
 		},
 
-		Resources: ResourceSummary{
-			Sampling: ResourceSampling{
-				IntervalMilliseconds: 1000,
-				Errors:               make([]string, 0),
-			},
+		ResourceCollection: &ResourceCollectionConfig{
+			BenchmarkPID: 100,
+			TargetPID:    200,
+			Interval:     time.Second,
 		},
 
 		HealthAddress: "127.0.0.1:8081",
@@ -213,6 +235,7 @@ func TestReportRunnerRun(t *testing.T) {
 
 			return value
 		},
+		resourceCollector: NoopResourceCollector{},
 	}
 
 	config := validReportRunConfig()
@@ -546,6 +569,7 @@ func TestReportRunnerCopiesConfigurationSlices(
 		now: func() time.Time {
 			return startedAt
 		},
+		resourceCollector: NoopResourceCollector{},
 	}
 
 	config := validReportRunConfig()
@@ -597,8 +621,9 @@ func TestReportRunnerUsesDefaultBinaryMetadata(
 	}
 
 	runner := &ReportRunner{
-		suiteRunner: fakeSuite,
-		now:         time.Now,
+		suiteRunner:       fakeSuite,
+		now:               time.Now,
+		resourceCollector: NoopResourceCollector{},
 	}
 
 	config := validReportRunConfig()
@@ -649,8 +674,9 @@ func TestReportRunnerUsesTargetAddressDefaults(
 	}
 
 	runner := &ReportRunner{
-		suiteRunner: fakeSuite,
-		now:         time.Now,
+		suiteRunner:       fakeSuite,
+		now:               time.Now,
+		resourceCollector: NoopResourceCollector{},
 	}
 
 	config := validReportRunConfig()
@@ -701,8 +727,9 @@ func TestReportRunnerUsesCustomThresholds(
 	}
 
 	runner := &ReportRunner{
-		suiteRunner: fakeSuite,
-		now:         time.Now,
+		suiteRunner:       fakeSuite,
+		now:               time.Now,
+		resourceCollector: NoopResourceCollector{},
 	}
 
 	config := validReportRunConfig()
@@ -733,6 +760,266 @@ func TestReportRunnerUsesCustomThresholds(
 	}
 }
 
+func TestReportRunnerCollectsResources(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	startedAt := time.Date(
+		2026,
+		time.August,
+		1,
+		10,
+		0,
+		0,
+		0,
+		time.UTC,
+	)
+
+	endedAt := startedAt.Add(
+		2 * time.Second,
+	)
+
+	collector := &recordedResourceCollector{
+		result: ResourceCollectionResult{
+			StartedAt: startedAt,
+			EndedAt:   endedAt,
+
+			BenchmarkPIDBefore: 100,
+			BenchmarkPIDAfter:  100,
+			TargetPIDBefore:    200,
+			TargetPIDAfter:     200,
+
+			Samples: []ResourceSample{
+				{
+					BenchmarkProcess: ProcessResourceSample{
+						PID:        100,
+						CPUPercent: float64Pointer(2),
+						RSSBytes:   uint64Pointer(10_000),
+						Threads:    uint64Pointer(4),
+					},
+					TargetService: ProcessResourceSample{
+						PID:        200,
+						CPUPercent: float64Pointer(3),
+						RSSBytes:   uint64Pointer(20_000),
+						Threads:    uint64Pointer(7),
+					},
+					System: SystemResourceSample{
+						LoadAverageOneMinute: float64Pointer(0.25),
+						MemoryAvailableBytes: uint64Pointer(300_000),
+						TemperatureCelsius:   float64Pointer(52),
+						ThrottledState:       stringPointer("throttled=0x0"),
+					},
+				},
+			},
+			Errors: make([]string, 0),
+		},
+	}
+
+	fakeSuite := &recordedSuiteRunner{
+		results: []ScenarioResult{
+			successfulReportScenario(
+				"udp-sequential",
+				ProtocolUDP,
+				1,
+			),
+		},
+	}
+
+	runner := &ReportRunner{
+		suiteRunner:       fakeSuite,
+		resourceCollector: collector,
+		now:               time.Now,
+	}
+
+	report, err := runner.Run(
+		context.Background(),
+		validReportRunConfig(),
+	)
+	if err != nil {
+		t.Fatalf(
+			"run benchmark report: %v",
+			err,
+		)
+	}
+
+	if !collector.called {
+		t.Fatal(
+			"resource collector was not called",
+		)
+	}
+
+	if report.Resources.Sampling.SamplesCollected != 1 {
+		t.Fatalf(
+			"unexpected sample count: got %d, want 1",
+			report.Resources.Sampling.SamplesCollected,
+		)
+	}
+
+	if report.Resources.BenchmarkProcess.CPUPercent.Mean == nil ||
+		*report.Resources.BenchmarkProcess.CPUPercent.Mean != 2 {
+		t.Fatalf(
+			"unexpected benchmark CPU mean: %v",
+			report.Resources.BenchmarkProcess.CPUPercent.Mean,
+		)
+	}
+
+	if report.Resources.TargetService.RSSBytes.Peak == nil ||
+		*report.Resources.TargetService.RSSBytes.Peak != 20_000 {
+		t.Fatalf(
+			"unexpected target RSS peak: %v",
+			report.Resources.TargetService.RSSBytes.Peak,
+		)
+	}
+
+	if report.Summary.Stability.ServiceRestartDetected == nil ||
+		*report.Summary.Stability.ServiceRestartDetected {
+		t.Fatal(
+			"unexpected service restart detection",
+		)
+	}
+
+	if report.Summary.Stability.ThermalThrottlingDetected == nil ||
+		*report.Summary.Stability.ThermalThrottlingDetected {
+		t.Fatal(
+			"unexpected thermal throttling detection",
+		)
+	}
+}
+
+func TestReportRunnerPassesResourceCollectionConfig(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	collector := &recordedResourceCollector{
+		result: ResourceCollectionResult{
+			Samples: make([]ResourceSample, 0),
+			Errors:  make([]string, 0),
+		},
+	}
+
+	config := validReportRunConfig()
+
+	runner := &ReportRunner{
+		suiteRunner: &recordedSuiteRunner{
+			results: []ScenarioResult{
+				successfulReportScenario(
+					"udp-sequential",
+					ProtocolUDP,
+					1,
+				),
+			},
+		},
+		resourceCollector: collector,
+		now:               time.Now,
+	}
+
+	_, err := runner.Run(
+		context.Background(),
+		config,
+	)
+	if err != nil {
+		t.Fatalf(
+			"run benchmark report: %v",
+			err,
+		)
+	}
+
+	if collector.config !=
+		*config.ResourceCollection {
+		t.Fatalf(
+			"unexpected resource collection config: got %+v, want %+v",
+			collector.config,
+			*config.ResourceCollection,
+		)
+	}
+}
+
+func TestReportRunnerReturnsResourceCollectorError(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	expectedErr := errors.New(
+		"collector failed",
+	)
+
+	runner := &ReportRunner{
+		suiteRunner: &recordedSuiteRunner{
+			results: []ScenarioResult{
+				successfulReportScenario(
+					"udp-sequential",
+					ProtocolUDP,
+					1,
+				),
+			},
+		},
+		resourceCollector: &recordedResourceCollector{
+			err: expectedErr,
+		},
+		now: time.Now,
+	}
+
+	_, err := runner.Run(
+		context.Background(),
+		validReportRunConfig(),
+	)
+	if err == nil {
+		t.Fatal(
+			"expected resource collection to fail",
+		)
+	}
+
+	if !strings.Contains(
+		err.Error(),
+		"collect benchmark resources",
+	) {
+		t.Fatalf(
+			"unexpected error: %v",
+			err,
+		)
+	}
+
+	if !errors.Is(err, expectedErr) {
+		t.Fatalf(
+			"resource collector error was not preserved: %v",
+			err,
+		)
+	}
+}
+
+func TestReportRunnerRejectsMissingResourceCollector(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	runner := &ReportRunner{
+		suiteRunner: &recordedSuiteRunner{},
+		now:         time.Now,
+	}
+
+	_, err := runner.Run(
+		context.Background(),
+		validReportRunConfig(),
+	)
+	if err == nil {
+		t.Fatal(
+			"expected missing resource collector to fail",
+		)
+	}
+
+	if !strings.Contains(
+		err.Error(),
+		"benchmark resource collector is not initialized",
+	) {
+		t.Fatalf(
+			"unexpected error: %v",
+			err,
+		)
+	}
+}
+
 func TestReportRunnerReturnsSuiteError(
 	t *testing.T,
 ) {
@@ -743,8 +1030,9 @@ func TestReportRunnerReturnsSuiteError(
 	}
 
 	runner := &ReportRunner{
-		suiteRunner: fakeSuite,
-		now:         time.Now,
+		suiteRunner:       fakeSuite,
+		now:               time.Now,
+		resourceCollector: NoopResourceCollector{},
 	}
 
 	_, err := runner.Run(
@@ -837,8 +1125,9 @@ func TestReportRunnerRejectsInvalidConfiguration(
 			test.mutate(&config)
 
 			runner := &ReportRunner{
-				suiteRunner: &recordedSuiteRunner{},
-				now:         time.Now,
+				suiteRunner:       &recordedSuiteRunner{},
+				now:               time.Now,
+				resourceCollector: NoopResourceCollector{},
 			}
 
 			_, err := runner.Run(
@@ -878,7 +1167,8 @@ func TestReportRunnerRejectsMissingSuiteRunner(
 	t.Parallel()
 
 	runner := &ReportRunner{
-		now: time.Now,
+		now:               time.Now,
+		resourceCollector: NoopResourceCollector{},
 	}
 
 	_, err := runner.Run(
@@ -898,7 +1188,8 @@ func TestReportRunnerRejectsMissingClock(
 	t.Parallel()
 
 	runner := &ReportRunner{
-		suiteRunner: &recordedSuiteRunner{},
+		suiteRunner:       &recordedSuiteRunner{},
+		resourceCollector: NoopResourceCollector{},
 	}
 
 	_, err := runner.Run(
@@ -918,8 +1209,9 @@ func TestReportRunnerRejectsNilContext(
 	t.Parallel()
 
 	runner := &ReportRunner{
-		suiteRunner: &recordedSuiteRunner{},
-		now:         time.Now,
+		suiteRunner:       &recordedSuiteRunner{},
+		now:               time.Now,
+		resourceCollector: NoopResourceCollector{},
 	}
 
 	_, err := runner.Run(
@@ -1427,6 +1719,7 @@ func TestReportRunnerForwardsProgressReporter(
 
 			return value
 		},
+		resourceCollector: NoopResourceCollector{},
 	}
 
 	config := validReportRunConfig()
@@ -1524,6 +1817,7 @@ func TestReportRunnerWorksWithoutProgressReporter(
 
 			return value
 		},
+		resourceCollector: NoopResourceCollector{},
 	}
 
 	config := validReportRunConfig()
@@ -1602,6 +1896,7 @@ func TestReportRunnerCopiesWorkloadConfiguration(
 
 			return value
 		},
+		resourceCollector: NoopResourceCollector{},
 	}
 
 	config := validReportRunConfig()
@@ -1759,6 +2054,7 @@ func TestReportRunnerReportQueryNamesDoNotShareSuiteStorage(
 
 			return value
 		},
+		resourceCollector: NoopResourceCollector{},
 	}
 
 	config := validReportRunConfig()
