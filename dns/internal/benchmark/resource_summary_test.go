@@ -239,3 +239,54 @@ func TestThrottlingDetected(
 		}
 	}
 }
+
+func TestBuildResourceSummaryInitializesEmptyErrors(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	summary := BuildResourceSummary(
+		ResourceCollectionResult{},
+		time.Second,
+	)
+
+	if summary.Sampling.Errors == nil {
+		t.Fatal(
+			"resource collection errors must be initialized",
+		)
+	}
+
+	if len(summary.Sampling.Errors) != 0 {
+		t.Fatalf(
+			"unexpected resource collection errors: %v",
+			summary.Sampling.Errors,
+		)
+	}
+}
+
+func TestBuildResourceSummaryCopiesErrors(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	result := ResourceCollectionResult{
+		Errors: []string{
+			"collection warning",
+		},
+	}
+
+	summary := BuildResourceSummary(
+		result,
+		time.Second,
+	)
+
+	summary.Sampling.Errors[0] =
+		"modified"
+
+	if result.Errors[0] !=
+		"collection warning" {
+		t.Fatal(
+			"resource summary shares error storage with collection result",
+		)
+	}
+}
