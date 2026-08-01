@@ -18,6 +18,16 @@ DNS_BINARY_PATH="${PROJECT_ROOT}/dns/${DNS_BINARY_NAME}"
 
 MODULE_PATH="github.com/Adrien-hue/homedns-analytics/dns"
 
+STAGING_DIR=""
+
+cleanup() {
+  if [[ -n "${STAGING_DIR}" ]]; then
+    rm -rf "${STAGING_DIR}"
+  fi
+
+  rm -f "${DNS_BINARY_PATH}"
+}
+
 fail() {
   echo "Error: $*" >&2
   exit 1
@@ -144,19 +154,12 @@ main() {
 
   validate_working_tree
 
-  local staging_dir
-  staging_dir="$(mktemp -d)"
-
-  cleanup() {
-    rm -rf "${staging_dir}"
-    rm -f "${DNS_BINARY_PATH}"
-  }
-
+  STAGING_DIR="$(mktemp -d)"
   trap cleanup EXIT
 
   build_dns_binary
   validate_dns_binary
-  create_archive "${staging_dir}"
+  create_archive "${STAGING_DIR}"
   validate_archive
 
   echo
