@@ -69,6 +69,10 @@ func validServiceConfig() ServiceConfig {
 		HealthAddress: reportConfig.HealthAddress,
 
 		StatusThresholds: reportConfig.StatusThresholds,
+
+		Profile: DefaultProfile,
+
+		ProfileCustomized: false,
 	}
 }
 
@@ -579,6 +583,115 @@ func TestNewService(t *testing.T) {
 	if service.now == nil {
 		t.Fatal(
 			"expected service clock",
+		)
+	}
+}
+
+func TestServiceRunForwardsProgressReporter(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	reporterCalled := false
+
+	reporter := ProgressReporterFunc(
+		func(event ProgressEvent) {
+			reporterCalled = true
+
+			if event.Type !=
+				ProgressEventBenchmarkStarted {
+				t.Fatalf(
+					"unexpected event type: got %q, want %q",
+					event.Type,
+					ProgressEventBenchmarkStarted,
+				)
+			}
+		},
+	)
+
+	reportRunner := &recordedReportRunner{
+		report: NewReport(
+			"benchmark-20260801-103000",
+			time.Date(
+				2026,
+				time.August,
+				1,
+				10,
+				30,
+				0,
+				0,
+				time.UTC,
+			),
+		),
+	}
+
+	reportWriter := &recordedReportWriter{}
+
+	currentTime := time.Date(
+		2026,
+		time.August,
+		1,
+		10,
+		30,
+		0,
+		0,
+		time.UTC,
+	)
+
+	service := &Service{
+		reportRunner: reportRunner,
+
+		writeReport: reportWriter.Write,
+
+		now: func() time.Time {
+			return currentTime
+		},
+	}
+
+	config := validServiceConfig()
+
+	config.Suite.ProgressReporter =
+		reporter
+
+	_, err := service.Run(
+		context.Background(),
+		config,
+	)
+	if err != nil {
+		t.Fatalf(
+			"run benchmark service: %v",
+			err,
+		)
+	}
+
+	if len(reportRunner.configs) != 1 {
+		t.Fatalf(
+			"unexpected report execution count: got %d, want 1",
+			len(reportRunner.configs),
+		)
+	}
+
+	forwardedReporter :=
+		reportRunner.
+			configs[0].
+			Suite.
+			ProgressReporter
+
+	if forwardedReporter == nil {
+		t.Fatal(
+			"progress reporter was not forwarded to report execution",
+		)
+	}
+
+	forwardedReporter.ReportProgress(
+		ProgressEvent{
+			Type: ProgressEventBenchmarkStarted,
+		},
+	)
+
+	if !reporterCalled {
+		t.Fatal(
+			"forwarded progress reporter was not called",
 		)
 	}
 }

@@ -31,13 +31,18 @@ func validReportRunConfig() ReportRunConfig {
 	return ReportRunConfig{
 		ID: "benchmark-20260728-200000",
 
+		Profile:           DefaultProfile,
+		ProfileCustomized: false,
+
 		Suite: SuiteConfig{
 			DirectAddress:    "1.1.1.1:53",
 			ForwardedAddress: "127.0.0.1:5300",
+
 			QueryNames: []string{
 				"example.com.",
 				"cloudflare.com.",
 			},
+
 			QueryType:         dns.TypeA,
 			WarmupQueries:     5,
 			QueryCount:        20,
@@ -1353,5 +1358,430 @@ func assertStringSlicesEqual(
 				expected[index],
 			)
 		}
+	}
+}
+
+func TestReportRunnerForwardsProgressReporter(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	reporterCalled := false
+
+	reporter := ProgressReporterFunc(
+		func(event ProgressEvent) {
+			reporterCalled = true
+
+			if event.Type !=
+				ProgressEventBenchmarkStarted {
+				t.Fatalf(
+					"unexpected progress event type: got %q, want %q",
+					event.Type,
+					ProgressEventBenchmarkStarted,
+				)
+			}
+		},
+	)
+
+	fakeSuite := &recordedSuiteRunner{
+		results: []ScenarioResult{
+			successfulReportScenario(
+				"udp-sequential",
+				ProtocolUDP,
+				1,
+			),
+		},
+	}
+
+	times := []time.Time{
+		time.Date(
+			2026,
+			time.August,
+			1,
+			10,
+			0,
+			0,
+			0,
+			time.UTC,
+		),
+		time.Date(
+			2026,
+			time.August,
+			1,
+			10,
+			0,
+			1,
+			0,
+			time.UTC,
+		),
+	}
+
+	clockIndex := 0
+
+	runner := &ReportRunner{
+		suiteRunner: fakeSuite,
+
+		now: func() time.Time {
+			value := times[clockIndex]
+			clockIndex++
+
+			return value
+		},
+	}
+
+	config := validReportRunConfig()
+
+	config.Suite.ProgressReporter =
+		reporter
+
+	_, err := runner.Run(
+		context.Background(),
+		config,
+	)
+	if err != nil {
+		t.Fatalf(
+			"run benchmark report: %v",
+			err,
+		)
+	}
+
+	if len(fakeSuite.configs) != 1 {
+		t.Fatalf(
+			"unexpected suite execution count: got %d, want 1",
+			len(fakeSuite.configs),
+		)
+	}
+
+	forwardedReporter :=
+		fakeSuite.configs[0].
+			ProgressReporter
+
+	if forwardedReporter == nil {
+		t.Fatal(
+			"progress reporter was not forwarded to the benchmark suite",
+		)
+	}
+
+	forwardedReporter.ReportProgress(
+		ProgressEvent{
+			Type: ProgressEventBenchmarkStarted,
+		},
+	)
+
+	if !reporterCalled {
+		t.Fatal(
+			"forwarded progress reporter was not called",
+		)
+	}
+}
+
+func TestReportRunnerWorksWithoutProgressReporter(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	fakeSuite := &recordedSuiteRunner{
+		results: []ScenarioResult{
+			successfulReportScenario(
+				"udp-sequential",
+				ProtocolUDP,
+				1,
+			),
+		},
+	}
+
+	times := []time.Time{
+		time.Date(
+			2026,
+			time.August,
+			1,
+			10,
+			0,
+			0,
+			0,
+			time.UTC,
+		),
+		time.Date(
+			2026,
+			time.August,
+			1,
+			10,
+			0,
+			1,
+			0,
+			time.UTC,
+		),
+	}
+
+	clockIndex := 0
+
+	runner := &ReportRunner{
+		suiteRunner: fakeSuite,
+
+		now: func() time.Time {
+			value := times[clockIndex]
+			clockIndex++
+
+			return value
+		},
+	}
+
+	config := validReportRunConfig()
+	config.Suite.ProgressReporter = nil
+
+	report, err := runner.Run(
+		context.Background(),
+		config,
+	)
+	if err != nil {
+		t.Fatalf(
+			"run benchmark report: %v",
+			err,
+		)
+	}
+
+	if report.Report.ID != config.ID {
+		t.Fatalf(
+			"unexpected report ID: got %q, want %q",
+			report.Report.ID,
+			config.ID,
+		)
+	}
+
+	if len(fakeSuite.configs) != 1 {
+		t.Fatalf(
+			"unexpected suite execution count: got %d, want 1",
+			len(fakeSuite.configs),
+		)
+	}
+}
+
+func TestReportRunnerCopiesWorkloadConfiguration(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	fakeSuite := &recordedSuiteRunner{
+		results: []ScenarioResult{
+			successfulReportScenario(
+				"udp-sequential",
+				ProtocolUDP,
+				1,
+			),
+		},
+	}
+
+	startedAt := time.Date(
+		2026,
+		time.August,
+		1,
+		10,
+		0,
+		0,
+		0,
+		time.UTC,
+	)
+
+	endedAt := startedAt.Add(
+		time.Second,
+	)
+
+	times := []time.Time{
+		startedAt,
+		endedAt,
+	}
+
+	clockIndex := 0
+
+	runner := &ReportRunner{
+		suiteRunner: fakeSuite,
+
+		now: func() time.Time {
+			value := times[clockIndex]
+			clockIndex++
+
+			return value
+		},
+	}
+
+	config := validReportRunConfig()
+
+	report, err := runner.Run(
+		context.Background(),
+		config,
+	)
+	if err != nil {
+		t.Fatalf(
+			"run benchmark report: %v",
+			err,
+		)
+	}
+
+	if report.Configuration.UpstreamAddress !=
+		config.Suite.DirectAddress {
+		t.Fatalf(
+			"unexpected upstream address: got %q, want %q",
+			report.Configuration.UpstreamAddress,
+			config.Suite.DirectAddress,
+		)
+	}
+
+	if report.Configuration.HomeDNSAddress !=
+		config.Suite.ForwardedAddress {
+		t.Fatalf(
+			"unexpected HomeDNS address: got %q, want %q",
+			report.Configuration.HomeDNSAddress,
+			config.Suite.ForwardedAddress,
+		)
+	}
+
+	if report.Configuration.HealthAddress !=
+		config.HealthAddress {
+		t.Fatalf(
+			"unexpected health address: got %q, want %q",
+			report.Configuration.HealthAddress,
+			config.HealthAddress,
+		)
+	}
+
+	if report.Configuration.QueryType != "A" {
+		t.Fatalf(
+			"unexpected query type: got %q, want %q",
+			report.Configuration.QueryType,
+			"A",
+		)
+	}
+
+	if report.Configuration.WarmupQueries !=
+		config.Suite.WarmupQueries {
+		t.Fatalf(
+			"unexpected warmup query count: got %d, want %d",
+			report.Configuration.WarmupQueries,
+			config.Suite.WarmupQueries,
+		)
+	}
+
+	if report.Configuration.QueriesPerPath !=
+		config.Suite.QueryCount {
+		t.Fatalf(
+			"unexpected queries-per-path value: got %d, want %d",
+			report.Configuration.QueriesPerPath,
+			config.Suite.QueryCount,
+		)
+	}
+
+	if report.Configuration.ConcurrentWorkers !=
+		config.Suite.ConcurrentWorkers {
+		t.Fatalf(
+			"unexpected worker count: got %d, want %d",
+			report.Configuration.ConcurrentWorkers,
+			config.Suite.ConcurrentWorkers,
+		)
+	}
+
+	if report.Configuration.TimeoutSeconds !=
+		config.Suite.Timeout.Seconds() {
+		t.Fatalf(
+			"unexpected timeout: got %f, want %f",
+			report.Configuration.TimeoutSeconds,
+			config.Suite.Timeout.Seconds(),
+		)
+	}
+
+	if len(report.Configuration.QueryNames) !=
+		len(config.Suite.QueryNames) {
+		t.Fatalf(
+			"unexpected query-name count: got %d, want %d",
+			len(report.Configuration.QueryNames),
+			len(config.Suite.QueryNames),
+		)
+	}
+
+	for index := range config.Suite.QueryNames {
+		if report.Configuration.QueryNames[index] !=
+			config.Suite.QueryNames[index] {
+			t.Fatalf(
+				"unexpected query name at index %d: got %q, want %q",
+				index,
+				report.Configuration.QueryNames[index],
+				config.Suite.QueryNames[index],
+			)
+		}
+	}
+}
+
+func TestReportRunnerReportQueryNamesDoNotShareSuiteStorage(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	fakeSuite := &recordedSuiteRunner{
+		results: []ScenarioResult{
+			successfulReportScenario(
+				"udp-sequential",
+				ProtocolUDP,
+				1,
+			),
+		},
+	}
+
+	times := []time.Time{
+		time.Date(
+			2026,
+			time.August,
+			1,
+			10,
+			0,
+			0,
+			0,
+			time.UTC,
+		),
+		time.Date(
+			2026,
+			time.August,
+			1,
+			10,
+			0,
+			1,
+			0,
+			time.UTC,
+		),
+	}
+
+	clockIndex := 0
+
+	runner := &ReportRunner{
+		suiteRunner: fakeSuite,
+
+		now: func() time.Time {
+			value := times[clockIndex]
+			clockIndex++
+
+			return value
+		},
+	}
+
+	config := validReportRunConfig()
+
+	report, err := runner.Run(
+		context.Background(),
+		config,
+	)
+	if err != nil {
+		t.Fatalf(
+			"run benchmark report: %v",
+			err,
+		)
+	}
+
+	report.Configuration.QueryNames[0] =
+		"modified.example."
+
+	if config.Suite.QueryNames[0] !=
+		"example.com." {
+		t.Fatalf(
+			"report query names share suite storage: got %q",
+			config.Suite.QueryNames[0],
+		)
 	}
 }

@@ -514,3 +514,411 @@ func TestDefaultSuiteConfig(t *testing.T) {
 		)
 	}
 }
+
+func TestSuiteRunnerReportsBenchmarkLifecycle(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	events := make(
+		[]ProgressEvent,
+		0,
+	)
+
+	reporter := ProgressReporterFunc(
+		func(event ProgressEvent) {
+			events = append(
+				events,
+				event,
+			)
+		},
+	)
+
+	fakeRunner := &recordedScenarioRunner{
+		results: []ScenarioResult{
+			{Name: "udp-sequential"},
+			{Name: "udp-concurrent"},
+			{Name: "tcp-sequential"},
+			{Name: "tcp-concurrent"},
+		},
+	}
+
+	runner := &SuiteRunner{
+		scenarioRunner: fakeRunner,
+	}
+
+	config := validSuiteConfig()
+	config.ProgressReporter = reporter
+
+	results, err := runner.Run(
+		context.Background(),
+		config,
+	)
+	if err != nil {
+		t.Fatalf(
+			"run benchmark suite: %v",
+			err,
+		)
+	}
+
+	if len(results) != 4 {
+		t.Fatalf(
+			"unexpected result count: got %d, want 4",
+			len(results),
+		)
+	}
+
+	if len(events) != 2 {
+		t.Fatalf(
+			"unexpected benchmark event count: got %d, want 2: %+v",
+			len(events),
+			events,
+		)
+	}
+
+	started := events[0]
+
+	if started.Type !=
+		ProgressEventBenchmarkStarted {
+		t.Fatalf(
+			"unexpected first event type: got %q, want %q",
+			started.Type,
+			ProgressEventBenchmarkStarted,
+		)
+	}
+
+	if started.ScenarioCount != 4 {
+		t.Fatalf(
+			"unexpected started scenario count: got %d, want 4",
+			started.ScenarioCount,
+		)
+	}
+
+	if started.ScenarioIndex != 0 {
+		t.Fatalf(
+			"unexpected started scenario index: got %d, want 0",
+			started.ScenarioIndex,
+		)
+	}
+
+	if started.Total != config.QueryCount {
+		t.Fatalf(
+			"unexpected started query total: got %d, want %d",
+			started.Total,
+			config.QueryCount,
+		)
+	}
+
+	if started.BenchmarkStartedAt.IsZero() {
+		t.Fatal(
+			"benchmark-started event has zero start time",
+		)
+	}
+
+	if started.OccurredAt.IsZero() {
+		t.Fatal(
+			"benchmark-started event has zero occurrence time",
+		)
+	}
+
+	completed := events[1]
+
+	if completed.Type !=
+		ProgressEventBenchmarkCompleted {
+		t.Fatalf(
+			"unexpected final event type: got %q, want %q",
+			completed.Type,
+			ProgressEventBenchmarkCompleted,
+		)
+	}
+
+	if completed.ScenarioIndex != 4 {
+		t.Fatalf(
+			"unexpected completed scenario index: got %d, want 4",
+			completed.ScenarioIndex,
+		)
+	}
+
+	if completed.ScenarioCount != 4 {
+		t.Fatalf(
+			"unexpected completed scenario count: got %d, want 4",
+			completed.ScenarioCount,
+		)
+	}
+
+	if completed.ScenarioName !=
+		"tcp-concurrent" {
+		t.Fatalf(
+			"unexpected completed scenario name: got %q, want %q",
+			completed.ScenarioName,
+			"tcp-concurrent",
+		)
+	}
+
+	if completed.Phase !=
+		ProgressPhaseForwarded {
+		t.Fatalf(
+			"unexpected completed phase: got %q, want %q",
+			completed.Phase,
+			ProgressPhaseForwarded,
+		)
+	}
+
+	if completed.Current !=
+		config.QueryCount {
+		t.Fatalf(
+			"unexpected completed query count: got %d, want %d",
+			completed.Current,
+			config.QueryCount,
+		)
+	}
+
+	if !completed.BenchmarkStartedAt.Equal(
+		started.BenchmarkStartedAt,
+	) {
+		t.Fatalf(
+			"benchmark lifecycle events use different start times: started=%s completed=%s",
+			started.BenchmarkStartedAt,
+			completed.BenchmarkStartedAt,
+		)
+	}
+
+	if completed.Elapsed < 0 {
+		t.Fatalf(
+			"completed event has negative elapsed time: %s",
+			completed.Elapsed,
+		)
+	}
+}
+
+func TestSuiteRunnerAssignsScenarioProgressMetadata(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	reporter := ProgressReporterFunc(
+		func(ProgressEvent) {},
+	)
+
+	fakeRunner := &recordedScenarioRunner{
+		results: []ScenarioResult{
+			{Name: "udp-sequential"},
+			{Name: "udp-concurrent"},
+			{Name: "tcp-sequential"},
+			{Name: "tcp-concurrent"},
+		},
+	}
+
+	runner := &SuiteRunner{
+		scenarioRunner: fakeRunner,
+	}
+
+	config := validSuiteConfig()
+	config.ProgressReporter = reporter
+
+	_, err := runner.Run(
+		context.Background(),
+		config,
+	)
+	if err != nil {
+		t.Fatalf(
+			"run benchmark suite: %v",
+			err,
+		)
+	}
+
+	if len(fakeRunner.configs) != 4 {
+		t.Fatalf(
+			"unexpected scenario configuration count: got %d, want 4",
+			len(fakeRunner.configs),
+		)
+	}
+
+	benchmarkStartedAt :=
+		fakeRunner.configs[0].
+			BenchmarkStartedAt
+
+	if benchmarkStartedAt.IsZero() {
+		t.Fatal(
+			"first scenario has zero benchmark start time",
+		)
+	}
+
+	for index, scenario := range fakeRunner.configs {
+		expectedIndex := index + 1
+
+		if scenario.ScenarioIndex !=
+			expectedIndex {
+			t.Fatalf(
+				"unexpected scenario %d index: got %d, want %d",
+				index,
+				scenario.ScenarioIndex,
+				expectedIndex,
+			)
+		}
+
+		if scenario.ScenarioCount != 4 {
+			t.Fatalf(
+				"unexpected scenario %d count: got %d, want 4",
+				index,
+				scenario.ScenarioCount,
+			)
+		}
+
+		if scenario.ProgressReporter == nil {
+			t.Fatalf(
+				"scenario %d does not contain a progress reporter",
+				index,
+			)
+		}
+
+		if !scenario.
+			BenchmarkStartedAt.
+			Equal(
+				benchmarkStartedAt,
+			) {
+			t.Fatalf(
+				"scenario %d has inconsistent benchmark start time: got %s, want %s",
+				index,
+				scenario.BenchmarkStartedAt,
+				benchmarkStartedAt,
+			)
+		}
+	}
+}
+
+func TestSuiteConfigScenariosPassesProgressReporter(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	reporter := ProgressReporterFunc(
+		func(ProgressEvent) {},
+	)
+
+	config := validSuiteConfig()
+	config.ProgressReporter = reporter
+
+	scenarios := config.Scenarios()
+
+	if len(scenarios) != 4 {
+		t.Fatalf(
+			"unexpected scenario count: got %d, want 4",
+			len(scenarios),
+		)
+	}
+
+	for index, scenario := range scenarios {
+		if scenario.ProgressReporter == nil {
+			t.Fatalf(
+				"scenario %d does not contain the suite progress reporter",
+				index,
+			)
+		}
+	}
+}
+
+func TestSuiteRunnerWorksWithoutProgressReporter(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	fakeRunner := &recordedScenarioRunner{
+		results: []ScenarioResult{
+			{Name: "udp-sequential"},
+			{Name: "udp-concurrent"},
+			{Name: "tcp-sequential"},
+			{Name: "tcp-concurrent"},
+		},
+	}
+
+	runner := &SuiteRunner{
+		scenarioRunner: fakeRunner,
+	}
+
+	config := validSuiteConfig()
+	config.ProgressReporter = nil
+
+	results, err := runner.Run(
+		context.Background(),
+		config,
+	)
+	if err != nil {
+		t.Fatalf(
+			"run benchmark suite: %v",
+			err,
+		)
+	}
+
+	if len(results) != 4 {
+		t.Fatalf(
+			"unexpected result count: got %d, want 4",
+			len(results),
+		)
+	}
+}
+
+func TestSuiteRunnerDoesNotReportCompletionAfterScenarioFailure(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	events := make(
+		[]ProgressEvent,
+		0,
+	)
+
+	reporter := ProgressReporterFunc(
+		func(event ProgressEvent) {
+			events = append(
+				events,
+				event,
+			)
+		},
+	)
+
+	fakeRunner := &recordedScenarioRunner{
+		results: []ScenarioResult{
+			{Name: "udp-sequential"},
+		},
+		errs: []error{
+			nil,
+			errors.New(
+				"UDP concurrent benchmark failed",
+			),
+		},
+	}
+
+	runner := &SuiteRunner{
+		scenarioRunner: fakeRunner,
+	}
+
+	config := validSuiteConfig()
+	config.ProgressReporter = reporter
+
+	_, err := runner.Run(
+		context.Background(),
+		config,
+	)
+	if err == nil {
+		t.Fatal(
+			"expected benchmark suite to fail",
+		)
+	}
+
+	if len(events) != 1 {
+		t.Fatalf(
+			"unexpected event count after failure: got %d, want 1",
+			len(events),
+		)
+	}
+
+	if events[0].Type !=
+		ProgressEventBenchmarkStarted {
+		t.Fatalf(
+			"unexpected event after failure: got %q, want %q",
+			events[0].Type,
+			ProgressEventBenchmarkStarted,
+		)
+	}
+}

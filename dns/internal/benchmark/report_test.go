@@ -421,6 +421,61 @@ func TestWriteJSON(t *testing.T) {
 			3.0,
 		)
 	}
+
+	if decoded.Configuration.WarmupQueries != 10 {
+		t.Fatalf(
+			"unexpected decoded warmup count: got %d, want %d",
+			decoded.Configuration.WarmupQueries,
+			10,
+		)
+	}
+
+	if decoded.Configuration.ConcurrentWorkers != 10 {
+		t.Fatalf(
+			"unexpected decoded concurrency: got %d, want %d",
+			decoded.Configuration.ConcurrentWorkers,
+			10,
+		)
+	}
+
+	if decoded.Configuration.TimeoutSeconds != 3 {
+		t.Fatalf(
+			"unexpected decoded timeout: got %f, want %f",
+			decoded.Configuration.TimeoutSeconds,
+			3.0,
+		)
+	}
+
+	if decoded.Configuration.QueryType != "A" {
+		t.Fatalf(
+			"unexpected decoded query type: got %q, want %q",
+			decoded.Configuration.QueryType,
+			"A",
+		)
+	}
+
+	if len(decoded.Configuration.QueryNames) != 1 {
+		t.Fatalf(
+			"unexpected decoded query-name count: got %d, want 1",
+			len(decoded.Configuration.QueryNames),
+		)
+	}
+
+	if decoded.Configuration.QueryNames[0] !=
+		"example.com." {
+		t.Fatalf(
+			"unexpected decoded query name: got %q, want %q",
+			decoded.Configuration.QueryNames[0],
+			"example.com.",
+		)
+	}
+
+	if len(decoded.Configuration.ScenarioOrder) != 4 {
+		t.Fatalf(
+			"unexpected decoded scenario-order count: got %d, want 4",
+			len(decoded.Configuration.ScenarioOrder),
+		)
+	}
 }
 
 func TestWriteJSONDoesNotEscapeHTML(t *testing.T) {
@@ -630,5 +685,343 @@ func assertScenarioStatusSlicesInitialized(
 
 	if summary.Invalid == nil {
 		t.Fatal("expected invalid scenarios to be initialized")
+	}
+}
+
+func TestWriteJSONPreservesBenchmarkProfile(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	report := NewReport(
+		"benchmark-profile",
+		time.Date(
+			2026,
+			time.August,
+			1,
+			10,
+			0,
+			0,
+			0,
+			time.UTC,
+		),
+	)
+
+	report.Configuration.Profile =
+		"validation"
+
+	report.Configuration.ProfileCustomized =
+		true
+
+	report.Configuration.QueriesPerPath =
+		250
+
+	report.Configuration.WarmupQueries =
+		5
+
+	report.Configuration.ConcurrentWorkers =
+		4
+
+	var output bytes.Buffer
+
+	if err := WriteJSON(
+		&output,
+		report,
+	); err != nil {
+		t.Fatalf(
+			"write JSON report: %v",
+			err,
+		)
+	}
+
+	var decoded Report
+
+	if err := json.Unmarshal(
+		output.Bytes(),
+		&decoded,
+	); err != nil {
+		t.Fatalf(
+			"decode generated report: %v",
+			err,
+		)
+	}
+
+	if decoded.Configuration.Profile !=
+		"validation" {
+		t.Fatalf(
+			"unexpected decoded profile: got %q, want %q",
+			decoded.Configuration.Profile,
+			"validation",
+		)
+	}
+
+	if !decoded.
+		Configuration.
+		ProfileCustomized {
+		t.Fatal(
+			"expected decoded profile to be customized",
+		)
+	}
+
+	if decoded.Configuration.QueriesPerPath !=
+		250 {
+		t.Fatalf(
+			"unexpected query count: got %d, want 250",
+			decoded.Configuration.QueriesPerPath,
+		)
+	}
+
+	if decoded.Configuration.WarmupQueries !=
+		5 {
+		t.Fatalf(
+			"unexpected warmup count: got %d, want 5",
+			decoded.Configuration.WarmupQueries,
+		)
+	}
+
+	if decoded.
+		Configuration.
+		ConcurrentWorkers != 4 {
+		t.Fatalf(
+			"unexpected concurrency: got %d, want 4",
+			decoded.
+				Configuration.
+				ConcurrentWorkers,
+		)
+	}
+}
+
+func TestWriteJSONPreservesPathPerformanceMetrics(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	report := NewReport(
+		"benchmark-performance",
+		time.Date(
+			2026,
+			time.August,
+			1,
+			10,
+			0,
+			0,
+			0,
+			time.UTC,
+		),
+	)
+
+	report.Scenarios = append(
+		report.Scenarios,
+		ScenarioResult{
+			Name: "tcp-concurrent",
+
+			Protocol: ProtocolTCP,
+
+			Concurrency: 10,
+
+			QueryCountPerPath: 100,
+
+			Status: StatusDegraded,
+
+			StatusReasons: make([]StatusReason, 0),
+
+			Forwarded: PathResult{
+				Requests: RequestCounts{
+					Attempted:  100,
+					Successful: 97,
+					Failed:     3,
+					Timeouts:   2,
+
+					NonTimeoutFailures: 1,
+				},
+
+				Rates: RequestRates{
+					SuccessPercent: 97,
+					FailurePercent: 3,
+					TimeoutPercent: 2,
+				},
+
+				DurationMilliseconds: 2_000,
+
+				Throughput: ThroughputMetrics{
+					AttemptedQueriesPerSecond: 50,
+
+					SuccessfulQueriesPerSecond: 48.5,
+				},
+
+				SuccessfulRequestLatencyMilliseconds: SuccessfulLatencyStatistics{
+					SampleCount: 97,
+					Minimum:     5,
+					Mean:        15,
+					Median:      12,
+					P95:         30,
+					P99:         45,
+					Maximum:     60,
+				},
+			},
+		},
+	)
+
+	var output bytes.Buffer
+
+	if err := WriteJSON(
+		&output,
+		report,
+	); err != nil {
+		t.Fatalf(
+			"write JSON report: %v",
+			err,
+		)
+	}
+
+	var decoded Report
+
+	if err := json.Unmarshal(
+		output.Bytes(),
+		&decoded,
+	); err != nil {
+		t.Fatalf(
+			"decode generated report: %v",
+			err,
+		)
+	}
+
+	if len(decoded.Scenarios) != 1 {
+		t.Fatalf(
+			"unexpected scenario count: got %d, want 1",
+			len(decoded.Scenarios),
+		)
+	}
+
+	path := decoded.Scenarios[0].Forwarded
+
+	expectedRequests := RequestCounts{
+		Attempted:          100,
+		Successful:         97,
+		Failed:             3,
+		Timeouts:           2,
+		NonTimeoutFailures: 1,
+	}
+
+	if path.Requests != expectedRequests {
+		t.Fatalf(
+			"unexpected request counts: got %+v, want %+v",
+			path.Requests,
+			expectedRequests,
+		)
+	}
+
+	if path.
+		Throughput.
+		AttemptedQueriesPerSecond != 50 {
+		t.Fatalf(
+			"unexpected attempted QPS: got %f, want 50",
+			path.
+				Throughput.
+				AttemptedQueriesPerSecond,
+		)
+	}
+
+	if path.
+		Throughput.
+		SuccessfulQueriesPerSecond != 48.5 {
+		t.Fatalf(
+			"unexpected successful QPS: got %f, want 48.5",
+			path.
+				Throughput.
+				SuccessfulQueriesPerSecond,
+		)
+	}
+
+	latency :=
+		path.
+			SuccessfulRequestLatencyMilliseconds
+
+	if latency.SampleCount != 97 {
+		t.Fatalf(
+			"unexpected latency sample count: got %d, want 97",
+			latency.SampleCount,
+		)
+	}
+
+	if latency.P95 != 30 {
+		t.Fatalf(
+			"unexpected p95 latency: got %f, want 30",
+			latency.P95,
+		)
+	}
+}
+
+func TestWriteJSONDecodedSlicesAreIndependent(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	report := NewReport(
+		"benchmark-slices",
+		time.Date(
+			2026,
+			time.August,
+			1,
+			10,
+			0,
+			0,
+			0,
+			time.UTC,
+		),
+	)
+
+	report.Configuration.QueryNames =
+		[]string{
+			"example.com.",
+		}
+
+	report.Configuration.ScenarioOrder =
+		[]string{
+			"udp-sequential",
+		}
+
+	var output bytes.Buffer
+
+	if err := WriteJSON(
+		&output,
+		report,
+	); err != nil {
+		t.Fatalf(
+			"write JSON report: %v",
+			err,
+		)
+	}
+
+	var decoded Report
+
+	if err := json.Unmarshal(
+		output.Bytes(),
+		&decoded,
+	); err != nil {
+		t.Fatalf(
+			"decode generated report: %v",
+			err,
+		)
+	}
+
+	decoded.Configuration.QueryNames[0] =
+		"modified.example."
+
+	decoded.Configuration.ScenarioOrder[0] =
+		"tcp-concurrent"
+
+	if report.Configuration.QueryNames[0] !=
+		"example.com." {
+		t.Fatal(
+			"decoded query names share storage with original report",
+		)
+	}
+
+	if report.Configuration.ScenarioOrder[0] !=
+		"udp-sequential" {
+		t.Fatal(
+			"decoded scenario order shares storage with original report",
+		)
 	}
 }

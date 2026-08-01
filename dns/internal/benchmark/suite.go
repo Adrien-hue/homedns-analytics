@@ -28,24 +28,34 @@ type SuiteConfig struct {
 
 	ConcurrentWorkers int
 	Timeout           time.Duration
+
+	ProgressReporter ProgressReporter
 }
 
 // Validate verifies that the suite can generate valid benchmark scenarios.
 func (c SuiteConfig) Validate() error {
 	if c.DirectAddress == "" {
-		return errors.New("direct DNS address is required")
+		return errors.New(
+			"direct DNS address is required",
+		)
 	}
 
 	if c.ForwardedAddress == "" {
-		return errors.New("forwarded DNS address is required")
+		return errors.New(
+			"forwarded DNS address is required",
+		)
 	}
 
 	if len(c.QueryNames) == 0 {
-		return errors.New("at least one DNS query name is required")
+		return errors.New(
+			"at least one DNS query name is required",
+		)
 	}
 
 	if c.QueryType == 0 {
-		return errors.New("DNS query type is required")
+		return errors.New(
+			"DNS query type is required",
+		)
 	}
 
 	if c.WarmupQueries < 0 {
@@ -127,12 +137,20 @@ func (c SuiteConfig) scenario(
 		Protocol:         protocol,
 		DirectAddress:    c.DirectAddress,
 		ForwardedAddress: c.ForwardedAddress,
-		QueryNames:       append([]string(nil), c.QueryNames...),
-		QueryType:        c.QueryType,
-		WarmupQueries:    c.WarmupQueries,
-		QueryCount:       c.QueryCount,
-		Concurrency:      concurrency,
-		Timeout:          c.Timeout,
+
+		QueryNames: append(
+			[]string(nil),
+			c.QueryNames...,
+		),
+
+		QueryType: c.QueryType,
+
+		WarmupQueries: c.WarmupQueries,
+		QueryCount:    c.QueryCount,
+		Concurrency:   concurrency,
+		Timeout:       c.Timeout,
+
+		ProgressReporter: c.ProgressReporter,
 	}
 }
 
@@ -145,17 +163,22 @@ func DefaultSuiteConfig(
 	return SuiteConfig{
 		DirectAddress:    directAddress,
 		ForwardedAddress: forwardedAddress,
+
 		QueryNames: []string{
 			"example.com.",
 			"cloudflare.com.",
 			"google.com.",
 			"github.com.",
 		},
-		QueryType:         dns.TypeA,
-		WarmupQueries:     10,
-		QueryCount:        100,
+
+		QueryType: dns.TypeA,
+
+		WarmupQueries: 10,
+		QueryCount:    100,
+
 		ConcurrentWorkers: DefaultConcurrentConcurrency,
-		Timeout:           2 * time.Second,
+
+		Timeout: 2 * time.Second,
 	}
 }
 
@@ -183,9 +206,16 @@ func (r *SuiteRunner) Run(
 	ctx context.Context,
 	config SuiteConfig,
 ) ([]ScenarioResult, error) {
-	if r == nil || r.scenarioRunner == nil {
+	if r == nil ||
+		r.scenarioRunner == nil {
 		return nil, errors.New(
 			"benchmark suite runner is not initialized",
+		)
+	}
+
+	if ctx == nil {
+		return nil, errors.New(
+			"benchmark context is required",
 		)
 	}
 
@@ -196,10 +226,36 @@ func (r *SuiteRunner) Run(
 		)
 	}
 
-	scenarios := config.Scenarios()
-	results := make([]ScenarioResult, 0, len(scenarios))
+	reporter := resolvedProgressReporter(
+		config.ProgressReporter,
+	)
 
-	for _, scenario := range scenarios {
+	benchmarkStartedAt := time.Now()
+
+	scenarios := config.Scenarios()
+	scenarioCount := len(scenarios)
+
+	reportBenchmarkEvent(
+		reporter,
+		ProgressEventBenchmarkStarted,
+		benchmarkStartedAt,
+		0,
+		scenarioCount,
+		"",
+		"",
+		0,
+		config.QueryCount,
+	)
+
+	results := make(
+		[]ScenarioResult,
+		0,
+		scenarioCount,
+	)
+
+	for index := range scenarios {
+		scenario := scenarios[index]
+
 		if err := ctx.Err(); err != nil {
 			return nil, fmt.Errorf(
 				"benchmark suite interrupted before scenario %q: %w",
@@ -208,10 +264,23 @@ func (r *SuiteRunner) Run(
 			)
 		}
 
-		result, err := r.scenarioRunner.RunScenario(
-			ctx,
-			scenario,
-		)
+		scenario.ProgressReporter =
+			reporter
+
+		scenario.BenchmarkStartedAt =
+			benchmarkStartedAt
+
+		scenario.ScenarioIndex =
+			index + 1
+
+		scenario.ScenarioCount =
+			scenarioCount
+
+		result, err :=
+			r.scenarioRunner.RunScenario(
+				ctx,
+				scenario,
+			)
 		if err != nil {
 			return nil, fmt.Errorf(
 				"run benchmark scenario %q: %w",
@@ -220,8 +289,67 @@ func (r *SuiteRunner) Run(
 			)
 		}
 
-		results = append(results, result)
+		results = append(
+			results,
+			result,
+		)
 	}
 
+	reportBenchmarkEvent(
+		reporter,
+		ProgressEventBenchmarkCompleted,
+		benchmarkStartedAt,
+		scenarioCount,
+		scenarioCount,
+		scenarios[scenarioCount-1].Name,
+		ProgressPhaseForwarded,
+		config.QueryCount,
+		config.QueryCount,
+	)
+
 	return results, nil
+}
+
+func reportBenchmarkEvent(
+	reporter ProgressReporter,
+	eventType string,
+	benchmarkStartedAt time.Time,
+	scenarioIndex int,
+	scenarioCount int,
+	scenarioName string,
+	phase string,
+	current int,
+	total int,
+) {
+	if reporter == nil {
+		return
+	}
+
+	now := time.Now()
+
+	reporter.ReportProgress(
+		ProgressEvent{
+			Type: eventType,
+
+			BenchmarkStartedAt: benchmarkStartedAt,
+
+			OccurredAt: now,
+
+			ScenarioName: scenarioName,
+
+			ScenarioIndex: scenarioIndex,
+
+			ScenarioCount: scenarioCount,
+
+			Phase: phase,
+
+			Current: current,
+
+			Total: total,
+
+			Elapsed: now.Sub(
+				benchmarkStartedAt,
+			),
+		},
+	)
 }
