@@ -11,10 +11,14 @@ CREATED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
 VERSION="${HOMEDNS_VERSION:-v0.2.0-rc2}"
 
-ARCHIVE_PATH="${1:-/tmp/homedns-${RELEASE_ID}.tar.gz}"
+DIST_DIR="${HOMEDNS_DIST_DIR:-${PROJECT_ROOT}/dns/dist}"
+
+ARCHIVE_PATH="${
+  1:-${DIST_DIR}/homedns-${RELEASE_ID}.tar.gz
+}"
 
 DNS_BINARY_NAME="homedns-dns"
-DNS_BINARY_PATH="${PROJECT_ROOT}/dns/${DNS_BINARY_NAME}"
+DNS_BINARY_PATH="${DIST_DIR}/homedns-dns-linux-arm64"
 
 MODULE_PATH="github.com/Adrien-hue/homedns-analytics/dns"
 
@@ -24,8 +28,6 @@ cleanup() {
   if [[ -n "${STAGING_DIR}" ]]; then
     rm -rf "${STAGING_DIR}"
   fi
-
-  rm -f "${DNS_BINARY_PATH}"
 }
 
 fail() {
@@ -153,6 +155,8 @@ main() {
   require_command tar
 
   validate_working_tree
+
+  mkdir -p "${DIST_DIR}"
 
   STAGING_DIR="$(mktemp -d)"
   trap cleanup EXIT
