@@ -11,16 +11,23 @@ func BuildResourceSummary(
 	result ResourceCollectionResult,
 	interval time.Duration,
 ) ResourceSummary {
+	errors := make(
+		[]string,
+		len(result.Errors),
+	)
+
+	copy(
+		errors,
+		result.Errors,
+	)
+
 	summary := ResourceSummary{
 		Sampling: ResourceSampling{
 			IntervalMilliseconds: interval.Milliseconds(),
 
 			SamplesCollected: len(result.Samples),
 
-			Errors: append(
-				[]string(nil),
-				result.Errors...,
-			),
+			Errors: errors,
 		},
 	}
 
