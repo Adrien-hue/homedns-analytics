@@ -1,0 +1,701 @@
+{
+  "schema_version": "2.0",
+  "report": {
+    "id": "benchmark-20260801-192630",
+    "created_at": "2026-08-01T19:26:30.129850392Z",
+    "status": "degraded",
+    "status_reasons": [
+      {
+        "code": "QUERY_FAILURE_RATE_EXCEEDED",
+        "scenario": "tcp-concurrent",
+        "path": "forwarded",
+        "observed": 1.4,
+        "threshold": 1,
+        "message": "query failure rate exceeded its acceptance threshold"
+      },
+      {
+        "code": "QUERY_TIMEOUT_RATE_EXCEEDED",
+        "scenario": "tcp-concurrent",
+        "path": "forwarded",
+        "observed": 1.3,
+        "threshold": 1,
+        "message": "query timeout rate exceeded its acceptance threshold"
+      }
+    ],
+    "notes": [
+      "one or more DNS queries failed",
+      "one or more DNS queries timed out"
+    ]
+  },
+  "execution": {
+    "started_at": "2026-08-01T19:26:30.129850392Z",
+    "ended_at": "2026-08-01T19:27:35.358651795Z",
+    "duration_ms": 65228.801403
+  },
+  "benchmark_binary": {
+    "project": "homedns-analytics",
+    "component": "homedns-dns",
+    "version": "v0.2.0-rc2",
+    "git_commit": "a0e40004f48e",
+    "git_branch": "",
+    "git_dirty": null,
+    "go_version": "go1.26.5",
+    "build_timestamp": "2026-08-01T19:14:35Z"
+  },
+  "target_service": {
+    "address": "192.168.1.32:53",
+    "health_address": "127.0.0.1:8081",
+    "version": "",
+    "git_commit": "",
+    "build_time": "",
+    "ready_before": null,
+    "ready_after": null,
+    "uptime_seconds_before": null,
+    "uptime_seconds_after": null,
+    "pid_before": null,
+    "pid_after": null,
+    "restart_count_before": null,
+    "restart_count_after": null,
+    "restart_detected": null
+  },
+  "environment": {
+    "hostname": "homedns",
+    "operating_system": "linux",
+    "kernel": "",
+    "architecture": "arm64",
+    "cpu_model": "",
+    "logical_cpus": 4,
+    "memory_total_bytes": null
+  },
+  "configuration": {
+    "profile": "validation",
+    "profile_customized": false,
+    "upstream_address": "1.1.1.1:53",
+    "homedns_address": "192.168.1.32:53",
+    "health_address": "127.0.0.1:8081",
+    "query_names": [
+      "example.com.",
+      "cloudflare.com.",
+      "google.com.",
+      "github.com."
+    ],
+    "query_type": "A",
+    "warmup_queries": 25,
+    "queries_per_path": 1000,
+    "concurrent_workers": 10,
+    "timeout_seconds": 3,
+    "resource_sampling_interval_ms": 1000,
+    "scenario_order": [
+      "udp-sequential",
+      "udp-concurrent",
+      "tcp-sequential",
+      "tcp-concurrent"
+    ],
+    "status_thresholds": {
+      "degraded_failure_percent": 1,
+      "failed_failure_percent": 5,
+      "degraded_timeout_percent": 1,
+      "failed_timeout_percent": 5
+    }
+  },
+  "scenarios": [
+    {
+      "name": "udp-sequential",
+      "protocol": "udp",
+      "concurrency": 1,
+      "query_count_per_path": 1000,
+      "status": "passed",
+      "status_reasons": [],
+      "direct": {
+        "requests": {
+          "attempted": 1000,
+          "successful": 1000,
+          "failed": 0,
+          "timeouts": 0,
+          "non_timeout_failures": 0
+        },
+        "rates": {
+          "success_percent": 100,
+          "failure_percent": 0,
+          "timeout_percent": 0
+        },
+        "duration_ms": 6562.946533,
+        "throughput": {
+          "attempted_queries_per_second": 152.370585,
+          "successful_queries_per_second": 152.370585
+        },
+        "successful_request_latency_ms": {
+          "sample_count": 1000,
+          "minimum": 2.428418,
+          "mean": 6.247877,
+          "median": 5.180505,
+          "p95": 10.466639,
+          "p99": 31.339469,
+          "maximum": 88.330173
+        },
+        "failures": {
+          "timeout": 0,
+          "network": 0,
+          "dns_response": 0,
+          "invalid_response": 0,
+          "internal": 0,
+          "other": 0
+        }
+      },
+      "forwarded": {
+        "requests": {
+          "attempted": 1000,
+          "successful": 1000,
+          "failed": 0,
+          "timeouts": 0,
+          "non_timeout_failures": 0
+        },
+        "rates": {
+          "success_percent": 100,
+          "failure_percent": 0,
+          "timeout_percent": 0
+        },
+        "duration_ms": 7247.5269,
+        "throughput": {
+          "attempted_queries_per_second": 137.978101,
+          "successful_queries_per_second": 137.978101
+        },
+        "successful_request_latency_ms": {
+          "sample_count": 1000,
+          "minimum": 3.429139,
+          "mean": 6.912299,
+          "median": 5.929353,
+          "p95": 10.142398,
+          "p99": 28.275648,
+          "maximum": 128.223917
+        },
+        "failures": {
+          "timeout": 0,
+          "network": 0,
+          "dns_response": 0,
+          "invalid_response": 0,
+          "internal": 0,
+          "other": 0
+        }
+      },
+      "comparison": {
+        "latency_overhead_ms": {
+          "mean": 0.664422,
+          "median": 0.748848,
+          "p95": -0.324241,
+          "p99": -3.063821
+        },
+        "latency_overhead_percent": {
+          "mean": 10.634364,
+          "median": 14.455116,
+          "p95": -3.097852,
+          "p99": -9.776238
+        },
+        "throughput_change_percent": {
+          "attempted": -9.44571,
+          "successful": -9.44571
+        },
+        "reliability_delta_percentage_points": {
+          "success": 0,
+          "failure": 0,
+          "timeout": 0
+        }
+      }
+    },
+    {
+      "name": "udp-concurrent",
+      "protocol": "udp",
+      "concurrency": 10,
+      "query_count_per_path": 1000,
+      "status": "passed",
+      "status_reasons": [],
+      "direct": {
+        "requests": {
+          "attempted": 1000,
+          "successful": 1000,
+          "failed": 0,
+          "timeouts": 0,
+          "non_timeout_failures": 0
+        },
+        "rates": {
+          "success_percent": 100,
+          "failure_percent": 0,
+          "timeout_percent": 0
+        },
+        "duration_ms": 1959.602766,
+        "throughput": {
+          "attempted_queries_per_second": 510.307506,
+          "successful_queries_per_second": 510.307506
+        },
+        "successful_request_latency_ms": {
+          "sample_count": 1000,
+          "minimum": 2.76977,
+          "mean": 19.278018,
+          "median": 17.694624,
+          "p95": 29.14224,
+          "p99": 77.535735,
+          "maximum": 105.642486
+        },
+        "failures": {
+          "timeout": 0,
+          "network": 0,
+          "dns_response": 0,
+          "invalid_response": 0,
+          "internal": 0,
+          "other": 0
+        }
+      },
+      "forwarded": {
+        "requests": {
+          "attempted": 1000,
+          "successful": 1000,
+          "failed": 0,
+          "timeouts": 0,
+          "non_timeout_failures": 0
+        },
+        "rates": {
+          "success_percent": 100,
+          "failure_percent": 0,
+          "timeout_percent": 0
+        },
+        "duration_ms": 1931.04124,
+        "throughput": {
+          "attempted_queries_per_second": 517.855331,
+          "successful_queries_per_second": 517.855331
+        },
+        "successful_request_latency_ms": {
+          "sample_count": 1000,
+          "minimum": 3.421639,
+          "mean": 18.989761,
+          "median": 14.796809,
+          "p95": 40.919415,
+          "p99": 98.789039,
+          "maximum": 107.789969
+        },
+        "failures": {
+          "timeout": 0,
+          "network": 0,
+          "dns_response": 0,
+          "invalid_response": 0,
+          "internal": 0,
+          "other": 0
+        }
+      },
+      "comparison": {
+        "latency_overhead_ms": {
+          "mean": -0.288257,
+          "median": -2.897815,
+          "p95": 11.777175,
+          "p99": 21.253304
+        },
+        "latency_overhead_percent": {
+          "mean": -1.495263,
+          "median": -16.37681,
+          "p95": 40.412731,
+          "p99": 27.410979
+        },
+        "throughput_change_percent": {
+          "attempted": 1.479074,
+          "successful": 1.479074
+        },
+        "reliability_delta_percentage_points": {
+          "success": 0,
+          "failure": 0,
+          "timeout": 0
+        }
+      }
+    },
+    {
+      "name": "tcp-sequential",
+      "protocol": "tcp",
+      "concurrency": 1,
+      "query_count_per_path": 1000,
+      "status": "passed",
+      "status_reasons": [],
+      "direct": {
+        "requests": {
+          "attempted": 1000,
+          "successful": 1000,
+          "failed": 0,
+          "timeouts": 0,
+          "non_timeout_failures": 0
+        },
+        "rates": {
+          "success_percent": 100,
+          "failure_percent": 0,
+          "timeout_percent": 0
+        },
+        "duration_ms": 11574.816426,
+        "throughput": {
+          "attempted_queries_per_second": 86.394459,
+          "successful_queries_per_second": 86.394459
+        },
+        "successful_request_latency_ms": {
+          "sample_count": 1000,
+          "minimum": 2.799926,
+          "mean": 5.038393,
+          "median": 4.135462,
+          "p95": 7.401136,
+          "p99": 13.242821,
+          "maximum": 105.102076
+        },
+        "failures": {
+          "timeout": 0,
+          "network": 0,
+          "dns_response": 0,
+          "invalid_response": 0,
+          "internal": 0,
+          "other": 0
+        }
+      },
+      "forwarded": {
+        "requests": {
+          "attempted": 1000,
+          "successful": 1000,
+          "failed": 0,
+          "timeouts": 0,
+          "non_timeout_failures": 0
+        },
+        "rates": {
+          "success_percent": 100,
+          "failure_percent": 0,
+          "timeout_percent": 0
+        },
+        "duration_ms": 13286.089069,
+        "throughput": {
+          "attempted_queries_per_second": 75.266694,
+          "successful_queries_per_second": 75.266694
+        },
+        "successful_request_latency_ms": {
+          "sample_count": 1000,
+          "minimum": 7.022132,
+          "mean": 12.450902,
+          "median": 9.577971,
+          "p95": 19.672146,
+          "p99": 105.666615,
+          "maximum": 157.228909
+        },
+        "failures": {
+          "timeout": 0,
+          "network": 0,
+          "dns_response": 0,
+          "invalid_response": 0,
+          "internal": 0,
+          "other": 0
+        }
+      },
+      "comparison": {
+        "latency_overhead_ms": {
+          "mean": 7.412509,
+          "median": 5.442509,
+          "p95": 12.27101,
+          "p99": 92.423794
+        },
+        "latency_overhead_percent": {
+          "mean": 147.120501,
+          "median": 131.605828,
+          "p95": 165.799007,
+          "p99": 697.916207
+        },
+        "throughput_change_percent": {
+          "attempted": -12.880184,
+          "successful": -12.880184
+        },
+        "reliability_delta_percentage_points": {
+          "success": 0,
+          "failure": 0,
+          "timeout": 0
+        }
+      }
+    },
+    {
+      "name": "tcp-concurrent",
+      "protocol": "tcp",
+      "concurrency": 10,
+      "query_count_per_path": 1000,
+      "status": "degraded",
+      "status_reasons": [
+        {
+          "code": "QUERY_FAILURE_RATE_EXCEEDED",
+          "scenario": "tcp-concurrent",
+          "path": "forwarded",
+          "observed": 1.4,
+          "threshold": 1,
+          "message": "query failure rate exceeded its acceptance threshold"
+        },
+        {
+          "code": "QUERY_TIMEOUT_RATE_EXCEEDED",
+          "scenario": "tcp-concurrent",
+          "path": "forwarded",
+          "observed": 1.3,
+          "threshold": 1,
+          "message": "query timeout rate exceeded its acceptance threshold"
+        }
+      ],
+      "direct": {
+        "requests": {
+          "attempted": 1000,
+          "successful": 1000,
+          "failed": 0,
+          "timeouts": 0,
+          "non_timeout_failures": 0
+        },
+        "rates": {
+          "success_percent": 100,
+          "failure_percent": 0,
+          "timeout_percent": 0
+        },
+        "duration_ms": 5880.050775,
+        "throughput": {
+          "attempted_queries_per_second": 170.066559,
+          "successful_queries_per_second": 170.066559
+        },
+        "successful_request_latency_ms": {
+          "sample_count": 1000,
+          "minimum": 10.579969,
+          "mean": 28.586065,
+          "median": 23.606454,
+          "p95": 58.270097,
+          "p99": 118.988897,
+          "maximum": 178.822076
+        },
+        "failures": {
+          "timeout": 0,
+          "network": 0,
+          "dns_response": 0,
+          "invalid_response": 0,
+          "internal": 0,
+          "other": 0
+        }
+      },
+      "forwarded": {
+        "requests": {
+          "attempted": 1000,
+          "successful": 986,
+          "failed": 14,
+          "timeouts": 13,
+          "non_timeout_failures": 1
+        },
+        "rates": {
+          "success_percent": 98.6,
+          "failure_percent": 1.4,
+          "timeout_percent": 1.3
+        },
+        "duration_ms": 15131.30958,
+        "throughput": {
+          "attempted_queries_per_second": 66.088133,
+          "successful_queries_per_second": 65.162899
+        },
+        "successful_request_latency_ms": {
+          "sample_count": 986,
+          "minimum": 7.345515,
+          "mean": 66.075854,
+          "median": 42.685654,
+          "p95": 146.77624,
+          "p99": 1025.561629,
+          "maximum": 2062.526733
+        },
+        "failures": {
+          "timeout": 13,
+          "network": 0,
+          "dns_response": 1,
+          "invalid_response": 0,
+          "internal": 0,
+          "other": 0
+        }
+      },
+      "comparison": {
+        "latency_overhead_ms": {
+          "mean": 37.489789,
+          "median": 19.0792,
+          "p95": 88.506143,
+          "p99": 906.572732
+        },
+        "latency_overhead_percent": {
+          "mean": 131.147078,
+          "median": 80.821965,
+          "p95": 151.889473,
+          "p99": 761.896912
+        },
+        "throughput_change_percent": {
+          "attempted": -61.139842,
+          "successful": -61.683885
+        },
+        "reliability_delta_percentage_points": {
+          "success": -1.4,
+          "failure": 1.4,
+          "timeout": 1.3
+        }
+      }
+    }
+  ],
+  "resources": {
+    "sampling": {
+      "interval_ms": 1000,
+      "samples_collected": 65,
+      "collection_started_at": "2026-08-01T19:26:30.129914298Z",
+      "collection_ended_at": "2026-08-01T19:27:35.358380391Z",
+      "errors": null
+    },
+    "benchmark_process": {
+      "pid_before": 9941,
+      "pid_after": 9941,
+      "restart_detected": false,
+      "cpu_percent": {
+        "minimum": 0,
+        "mean": 4.115798,
+        "peak": 11.111111
+      },
+      "rss_bytes": {
+        "minimum": 7290880,
+        "mean": 12955220.059701,
+        "peak": 13860864
+      },
+      "threads": {
+        "minimum": 8,
+        "mean": 9.567164,
+        "peak": 11
+      }
+    },
+    "target_service": {
+      "pid_before": 9801,
+      "pid_after": 9801,
+      "restart_detected": false,
+      "cpu_percent": {
+        "minimum": 0,
+        "mean": 3.049008,
+        "peak": 14.247312
+      },
+      "rss_bytes": {
+        "minimum": 10129408,
+        "mean": 13132754.149254,
+        "peak": 13651968
+      },
+      "threads": {
+        "minimum": 10,
+        "mean": 10,
+        "peak": 10
+      }
+    },
+    "system": {
+      "load_average_1m": {
+        "before": 0,
+        "mean": 0.138615,
+        "peak": 0.31,
+        "after": 0.26
+      },
+      "memory_available_bytes": {
+        "before": 725676032,
+        "minimum": 718397440,
+        "after": 718405632
+      },
+      "temperature_celsius": {
+        "before": 48.312,
+        "mean": 48.502369,
+        "peak": 49.388,
+        "after": 48.312
+      },
+      "throttling": {
+        "before": "throttled=0x0",
+        "observed_during_run": false,
+        "after": "throttled=0x0"
+      }
+    }
+  },
+  "summary": {
+    "status": "degraded",
+    "status_reasons": [
+      {
+        "code": "QUERY_FAILURE_RATE_EXCEEDED",
+        "scenario": "tcp-concurrent",
+        "path": "forwarded",
+        "observed": 1.4,
+        "threshold": 1,
+        "message": "query failure rate exceeded its acceptance threshold"
+      },
+      {
+        "code": "QUERY_TIMEOUT_RATE_EXCEEDED",
+        "scenario": "tcp-concurrent",
+        "path": "forwarded",
+        "observed": 1.3,
+        "threshold": 1,
+        "message": "query timeout rate exceeded its acceptance threshold"
+      }
+    ],
+    "notes": [
+      "one or more DNS queries failed",
+      "one or more DNS queries timed out"
+    ],
+    "requests": {
+      "attempted": 8000,
+      "successful": 7986,
+      "failed": 14,
+      "timeouts": 13,
+      "non_timeout_failures": 1
+    },
+    "rates": {
+      "success_percent": 99.825,
+      "failure_percent": 0.175,
+      "timeout_percent": 0.1625
+    },
+    "throughput": {
+      "attempted_queries_per_second": 122.645209,
+      "successful_queries_per_second": 122.43058
+    },
+    "reliability": {
+      "direct": {
+        "requests": {
+          "attempted": 4000,
+          "successful": 4000,
+          "failed": 0,
+          "timeouts": 0,
+          "non_timeout_failures": 0
+        },
+        "rates": {
+          "success_percent": 100,
+          "failure_percent": 0,
+          "timeout_percent": 0
+        }
+      },
+      "forwarded": {
+        "requests": {
+          "attempted": 4000,
+          "successful": 3986,
+          "failed": 14,
+          "timeouts": 13,
+          "non_timeout_failures": 1
+        },
+        "rates": {
+          "success_percent": 99.65,
+          "failure_percent": 0.35,
+          "timeout_percent": 0.325
+        }
+      }
+    },
+    "scenario_results": {
+      "passed": [
+        "udp-sequential",
+        "udp-concurrent",
+        "tcp-sequential"
+      ],
+      "degraded": [
+        "tcp-concurrent"
+      ],
+      "failed": [],
+      "invalid": []
+    },
+    "worst_scenario": {
+      "name": "tcp-concurrent",
+      "path": "forwarded",
+      "failure_percent": 1.4,
+      "timeout_percent": 1.3,
+      "p95_successful_latency_ms": 146.77624
+    },
+    "stability": {
+      "service_ready_after": null,
+      "service_restart_detected": false,
+      "memory_growth_detected": null,
+      "thermal_throttling_detected": false
+    }
+  }
+}
