@@ -24,6 +24,16 @@ type PathConfig struct {
 	QueryCount  int
 	Concurrency int
 	Timeout     time.Duration
+
+	ProgressReporter ProgressReporter
+
+	BenchmarkStartedAt time.Time
+
+	ScenarioName  string
+	ScenarioIndex int
+	ScenarioCount int
+
+	Phase string
 }
 
 // Validate verifies that a path benchmark can be executed safely.

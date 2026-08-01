@@ -12,6 +12,9 @@ const defaultReportFileExtension = ".json"
 
 // ServiceConfig contains the inputs required for one benchmark execution.
 type ServiceConfig struct {
+	Profile           string
+	ProfileCustomized bool
+
 	OutputDirectory string
 
 	Suite SuiteConfig
@@ -28,6 +31,15 @@ type ServiceConfig struct {
 
 // Validate verifies the benchmark service configuration.
 func (c ServiceConfig) Validate() error {
+	if err := ValidateProfile(
+		c.Profile,
+	); err != nil {
+		return fmt.Errorf(
+			"benchmark profile is invalid: %w",
+			err,
+		)
+	}
+
 	if c.OutputDirectory == "" {
 		return errors.New(
 			"benchmark output directory is required",
@@ -140,6 +152,10 @@ func (s *Service) Run(
 		ReportRunConfig{
 			ID: benchmarkID,
 
+			Profile: config.Profile,
+
+			ProfileCustomized: config.ProfileCustomized,
+
 			Suite: config.Suite,
 
 			BenchmarkBinary: config.BenchmarkBinary,
@@ -164,7 +180,8 @@ func (s *Service) Run(
 
 	reportPath := filepath.Join(
 		config.OutputDirectory,
-		benchmarkID+defaultReportFileExtension,
+		benchmarkID+
+			defaultReportFileExtension,
 	)
 
 	if err := s.writeReport(

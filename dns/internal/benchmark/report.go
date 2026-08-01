@@ -111,6 +111,9 @@ type Environment struct {
 // Configuration contains every workload parameter needed to reproduce the
 // benchmark.
 type Configuration struct {
+	Profile           string `json:"profile"`
+	ProfileCustomized bool   `json:"profile_customized"`
+
 	UpstreamAddress string `json:"upstream_address"`
 	HomeDNSAddress  string `json:"homedns_address"`
 	HealthAddress   string `json:"health_address"`

@@ -22,6 +22,9 @@ const (
 type ReportRunConfig struct {
 	ID string
 
+	Profile           string
+	ProfileCustomized bool
+
 	Suite SuiteConfig
 
 	BenchmarkBinary BenchmarkBinaryMetadata
@@ -38,6 +41,19 @@ type ReportRunConfig struct {
 func (c ReportRunConfig) Validate() error {
 	if c.ID == "" {
 		return errors.New("benchmark ID is required")
+	}
+
+	if err := ValidateProfile(
+		c.Profile,
+	); err != nil {
+		return fmt.Errorf(
+			"benchmark profile is invalid: %w",
+			err,
+		)
+	}
+
+	if c.Profile == "" {
+		return errors.New("benchmark profile is required")
 	}
 
 	if err := c.Suite.Validate(); err != nil {
@@ -212,6 +228,9 @@ func applyReportMetadata(
 	}
 
 	report.Configuration = Configuration{
+		Profile:           config.Profile,
+		ProfileCustomized: config.ProfileCustomized,
+
 		UpstreamAddress: config.Suite.DirectAddress,
 		HomeDNSAddress:  config.Suite.ForwardedAddress,
 		HealthAddress:   config.HealthAddress,
@@ -245,14 +264,15 @@ func applyReportMetadata(
 func resolvedStatusThresholds(
 	thresholds StatusThresholds,
 ) StatusThresholds {
-	if thresholds ==
-		(StatusThresholds{}) {
+	if thresholds == (StatusThresholds{}) {
 		return StatusThresholds{
 			DegradedFailurePercent: defaultDegradedFailurePercent,
-			FailedFailurePercent:   defaultFailedFailurePercent,
+
+			FailedFailurePercent: defaultFailedFailurePercent,
 
 			DegradedTimeoutPercent: defaultDegradedTimeoutPercent,
-			FailedTimeoutPercent:   defaultFailedTimeoutPercent,
+
+			FailedTimeoutPercent: defaultFailedTimeoutPercent,
 		}
 	}
 
@@ -314,6 +334,7 @@ func classifyScenarios(
 
 	for index := range scenarios {
 		results[index] = scenarios[index]
+
 		classifyScenario(
 			&results[index],
 			thresholds,

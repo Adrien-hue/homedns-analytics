@@ -971,3 +971,678 @@ func assertFailureBreakdown(
 		)
 	}
 }
+
+func TestRunnerRunPathReportsProgressEvents(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	startedAt := time.Date(
+		2026,
+		time.August,
+		1,
+		10,
+		0,
+		0,
+		0,
+		time.UTC,
+	)
+
+	events := make(
+		[]ProgressEvent,
+		0,
+	)
+
+	reporter := ProgressReporterFunc(
+		func(event ProgressEvent) {
+			events = append(
+				events,
+				event,
+			)
+		},
+	)
+
+	runner := &Runner{
+		exchange: func(
+			_ context.Context,
+			message *dns.Msg,
+			_ string,
+		) (*dns.Msg, time.Duration, error) {
+			response := new(dns.Msg)
+			response.SetReply(message)
+
+			return response,
+				2 * time.Millisecond,
+				nil
+		},
+	}
+
+	config := validPathConfig()
+	config.QueryCount = 4
+	config.Concurrency = 1
+
+	config.ProgressReporter =
+		reporter
+
+	config.BenchmarkStartedAt =
+		startedAt
+
+	config.ScenarioName =
+		"udp-sequential"
+
+	config.ScenarioIndex = 1
+	config.ScenarioCount = 4
+	config.Phase = ProgressPhaseDirect
+
+	result, err := runner.RunPath(
+		context.Background(),
+		config,
+	)
+	if err != nil {
+		t.Fatalf(
+			"run benchmark path: %v",
+			err,
+		)
+	}
+
+	if len(events) < 3 {
+		t.Fatalf(
+			"expected at least three progress events, got %d: %+v",
+			len(events),
+			events,
+		)
+	}
+
+	started := events[0]
+
+	if started.Type !=
+		ProgressEventPhaseStarted {
+		t.Fatalf(
+			"unexpected first event type: got %q, want %q",
+			started.Type,
+			ProgressEventPhaseStarted,
+		)
+	}
+
+	assertRunnerProgressMetadata(
+		t,
+		started,
+		config,
+	)
+
+	if started.Current != 0 {
+		t.Fatalf(
+			"unexpected started progress: got %d, want 0",
+			started.Current,
+		)
+	}
+
+	if started.PathResult != nil {
+		t.Fatal(
+			"phase-started event unexpectedly contains a path result",
+		)
+	}
+
+	var progress *ProgressEvent
+
+	for index := range events {
+		if events[index].Type ==
+			ProgressEventPhaseProgress {
+			progress = &events[index]
+			break
+		}
+	}
+
+	if progress == nil {
+		t.Fatalf(
+			"no phase-progress event received: %+v",
+			events,
+		)
+	}
+
+	assertRunnerProgressMetadata(
+		t,
+		*progress,
+		config,
+	)
+
+	if progress.Current <= 0 ||
+		progress.Current >
+			config.QueryCount {
+		t.Fatalf(
+			"unexpected live progress count: got %d",
+			progress.Current,
+		)
+	}
+
+	if progress.Successful !=
+		progress.Current {
+		t.Fatalf(
+			"unexpected live success count: current=%d successful=%d",
+			progress.Current,
+			progress.Successful,
+		)
+	}
+
+	if progress.AttemptedQueriesPerSecond <= 0 {
+		t.Fatalf(
+			"expected positive live attempted QPS, got %f",
+			progress.AttemptedQueriesPerSecond,
+		)
+	}
+
+	if progress.SuccessfulQueriesPerSecond <= 0 {
+		t.Fatalf(
+			"expected positive live successful QPS, got %f",
+			progress.SuccessfulQueriesPerSecond,
+		)
+	}
+
+	if progress.PhaseElapsed <= 0 {
+		t.Fatalf(
+			"expected positive phase elapsed time, got %s",
+			progress.PhaseElapsed,
+		)
+	}
+
+	completed := events[len(events)-1]
+
+	if completed.Type !=
+		ProgressEventPhaseCompleted {
+		t.Fatalf(
+			"unexpected final event type: got %q, want %q",
+			completed.Type,
+			ProgressEventPhaseCompleted,
+		)
+	}
+
+	assertRunnerProgressMetadata(
+		t,
+		completed,
+		config,
+	)
+
+	if completed.Current !=
+		config.QueryCount {
+		t.Fatalf(
+			"unexpected completion count: got %d, want %d",
+			completed.Current,
+			config.QueryCount,
+		)
+	}
+
+	if completed.Successful !=
+		config.QueryCount {
+		t.Fatalf(
+			"unexpected completion success count: got %d, want %d",
+			completed.Successful,
+			config.QueryCount,
+		)
+	}
+
+	if completed.Failed != 0 ||
+		completed.Timeouts != 0 {
+		t.Fatalf(
+			"unexpected completion failures: failed=%d timeouts=%d",
+			completed.Failed,
+			completed.Timeouts,
+		)
+	}
+
+	if completed.PathResult == nil {
+		t.Fatal(
+			"phase-completed event does not contain the final path result",
+		)
+	}
+
+	if completed.PathResult.Requests !=
+		result.Requests {
+		t.Fatalf(
+			"unexpected reported request counts: got %+v, want %+v",
+			completed.PathResult.Requests,
+			result.Requests,
+		)
+	}
+
+	if completed.
+		PathResult.
+		Throughput.
+		SuccessfulQueriesPerSecond <= 0 {
+		t.Fatalf(
+			"expected final path result to contain successful QPS: %+v",
+			completed.PathResult.Throughput,
+		)
+	}
+
+	if completed.
+		PathResult.
+		SuccessfulRequestLatencyMilliseconds.
+		SampleCount != config.QueryCount {
+		t.Fatalf(
+			"unexpected final latency sample count: got %d, want %d",
+			completed.
+				PathResult.
+				SuccessfulRequestLatencyMilliseconds.
+				SampleCount,
+			config.QueryCount,
+		)
+	}
+}
+
+func TestRunnerRunPathProgressReportsFailures(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	events := make(
+		[]ProgressEvent,
+		0,
+	)
+
+	reporter := ProgressReporterFunc(
+		func(event ProgressEvent) {
+			events = append(
+				events,
+				event,
+			)
+		},
+	)
+
+	requestNumber := 0
+
+	runner := &Runner{
+		exchange: func(
+			_ context.Context,
+			message *dns.Msg,
+			_ string,
+		) (*dns.Msg, time.Duration, error) {
+			requestNumber++
+
+			switch requestNumber {
+			case 1:
+				return nil,
+					0,
+					context.DeadlineExceeded
+
+			case 2:
+				return nil,
+					0,
+					errors.New(
+						"temporary failure",
+					)
+
+			default:
+				response := new(dns.Msg)
+				response.SetReply(message)
+
+				return response,
+					time.Millisecond,
+					nil
+			}
+		},
+	}
+
+	config := validPathConfig()
+	config.QueryCount = 3
+	config.Concurrency = 1
+
+	config.ProgressReporter =
+		reporter
+
+	config.ScenarioName =
+		"udp-sequential"
+
+	config.ScenarioIndex = 1
+	config.ScenarioCount = 4
+	config.Phase = ProgressPhaseForwarded
+
+	result, err := runner.RunPath(
+		context.Background(),
+		config,
+	)
+	if err != nil {
+		t.Fatalf(
+			"run benchmark path: %v",
+			err,
+		)
+	}
+
+	if len(events) == 0 {
+		t.Fatal(
+			"expected progress events",
+		)
+	}
+
+	completed := events[len(events)-1]
+
+	if completed.Type !=
+		ProgressEventPhaseCompleted {
+		t.Fatalf(
+			"unexpected final event type: got %q, want %q",
+			completed.Type,
+			ProgressEventPhaseCompleted,
+		)
+	}
+
+	if completed.Current != 3 {
+		t.Fatalf(
+			"unexpected completed count: got %d, want 3",
+			completed.Current,
+		)
+	}
+
+	if completed.Successful != 1 {
+		t.Fatalf(
+			"unexpected successful count: got %d, want 1",
+			completed.Successful,
+		)
+	}
+
+	if completed.Failed != 2 {
+		t.Fatalf(
+			"unexpected failed count: got %d, want 2",
+			completed.Failed,
+		)
+	}
+
+	if completed.Timeouts != 1 {
+		t.Fatalf(
+			"unexpected timeout count: got %d, want 1",
+			completed.Timeouts,
+		)
+	}
+
+	if completed.Path != "forwarded" {
+		t.Fatalf(
+			"unexpected progress path: got %q, want %q",
+			completed.Path,
+			"forwarded",
+		)
+	}
+
+	if completed.PathResult == nil {
+		t.Fatal(
+			"completed event does not contain a path result",
+		)
+	}
+
+	if completed.PathResult.Requests !=
+		result.Requests {
+		t.Fatalf(
+			"unexpected completed path requests: got %+v, want %+v",
+			completed.PathResult.Requests,
+			result.Requests,
+		)
+	}
+
+	if completed.
+		SuccessfulQueriesPerSecond >=
+		completed.
+			AttemptedQueriesPerSecond {
+		t.Fatalf(
+			"expected successful live QPS below attempted QPS: attempted=%f successful=%f",
+			completed.
+				AttemptedQueriesPerSecond,
+			completed.
+				SuccessfulQueriesPerSecond,
+		)
+	}
+}
+
+func TestRunnerRunPathWorksWithoutProgressReporter(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	runner := &Runner{
+		exchange: func(
+			_ context.Context,
+			message *dns.Msg,
+			_ string,
+		) (*dns.Msg, time.Duration, error) {
+			response := new(dns.Msg)
+			response.SetReply(message)
+
+			return response,
+				time.Millisecond,
+				nil
+		},
+	}
+
+	config := validPathConfig()
+	config.QueryCount = 2
+	config.Concurrency = 1
+	config.ProgressReporter = nil
+
+	result, err := runner.RunPath(
+		context.Background(),
+		config,
+	)
+	if err != nil {
+		t.Fatalf(
+			"run benchmark path: %v",
+			err,
+		)
+	}
+
+	if result.Requests.Successful != 2 {
+		t.Fatalf(
+			"unexpected successful count: got %d, want 2",
+			result.Requests.Successful,
+		)
+	}
+}
+
+func TestLiveQueriesPerSecond(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		queryCount int
+		elapsed    time.Duration
+		expected   float64
+	}{
+		{
+			name:       "zero queries",
+			queryCount: 0,
+			elapsed:    time.Second,
+			expected:   0,
+		},
+		{
+			name:       "zero elapsed",
+			queryCount: 10,
+			elapsed:    0,
+			expected:   0,
+		},
+		{
+			name:       "one hundred QPS",
+			queryCount: 50,
+			elapsed:    500 * time.Millisecond,
+			expected:   100,
+		},
+		{
+			name:       "fractional QPS",
+			queryCount: 1,
+			elapsed:    3 * time.Second,
+			expected:   0.333333,
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+
+		t.Run(
+			test.name,
+			func(t *testing.T) {
+				t.Parallel()
+
+				actual := liveQueriesPerSecond(
+					test.queryCount,
+					test.elapsed,
+				)
+
+				if actual != test.expected {
+					t.Fatalf(
+						"unexpected live QPS: got %f, want %f",
+						actual,
+						test.expected,
+					)
+				}
+			},
+		)
+	}
+}
+
+func TestShouldReportProgress(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	now := time.Date(
+		2026,
+		time.August,
+		1,
+		10,
+		0,
+		0,
+		0,
+		time.UTC,
+	)
+
+	tests := []struct {
+		name           string
+		current        int
+		total          int
+		lastProgressAt time.Time
+		expected       bool
+	}{
+		{
+			name:     "no completed query",
+			current:  0,
+			total:    100,
+			expected: false,
+		},
+		{
+			name:     "first progress event",
+			current:  1,
+			total:    100,
+			expected: true,
+		},
+		{
+			name:    "completed path",
+			current: 100,
+			total:   100,
+			lastProgressAt: now.Add(
+				-100 * time.Millisecond,
+			),
+			expected: true,
+		},
+		{
+			name:    "less than one second",
+			current: 50,
+			total:   100,
+			lastProgressAt: now.Add(
+				-500 * time.Millisecond,
+			),
+			expected: false,
+		},
+		{
+			name:    "one second elapsed",
+			current: 50,
+			total:   100,
+			lastProgressAt: now.Add(
+				-time.Second,
+			),
+			expected: true,
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+
+		t.Run(
+			test.name,
+			func(t *testing.T) {
+				t.Parallel()
+
+				actual := shouldReportProgress(
+					test.current,
+					test.total,
+					test.lastProgressAt,
+					now,
+				)
+
+				if actual != test.expected {
+					t.Fatalf(
+						"unexpected reporting decision: got %t, want %t",
+						actual,
+						test.expected,
+					)
+				}
+			},
+		)
+	}
+}
+
+func assertRunnerProgressMetadata(
+	t *testing.T,
+	event ProgressEvent,
+	config PathConfig,
+) {
+	t.Helper()
+
+	if event.ScenarioName !=
+		config.ScenarioName {
+		t.Fatalf(
+			"unexpected scenario name: got %q, want %q",
+			event.ScenarioName,
+			config.ScenarioName,
+		)
+	}
+
+	if event.ScenarioIndex !=
+		config.ScenarioIndex {
+		t.Fatalf(
+			"unexpected scenario index: got %d, want %d",
+			event.ScenarioIndex,
+			config.ScenarioIndex,
+		)
+	}
+
+	if event.ScenarioCount !=
+		config.ScenarioCount {
+		t.Fatalf(
+			"unexpected scenario count: got %d, want %d",
+			event.ScenarioCount,
+			config.ScenarioCount,
+		)
+	}
+
+	if event.Phase != config.Phase {
+		t.Fatalf(
+			"unexpected phase: got %q, want %q",
+			event.Phase,
+			config.Phase,
+		)
+	}
+
+	if event.Path != "direct" {
+		t.Fatalf(
+			"unexpected path: got %q, want %q",
+			event.Path,
+			"direct",
+		)
+	}
+
+	if !event.BenchmarkStartedAt.Equal(
+		config.BenchmarkStartedAt,
+	) {
+		t.Fatalf(
+			"unexpected benchmark start: got %s, want %s",
+			event.BenchmarkStartedAt,
+			config.BenchmarkStartedAt,
+		)
+	}
+}

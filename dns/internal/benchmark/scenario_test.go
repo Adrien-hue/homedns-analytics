@@ -918,3 +918,596 @@ func assertLatencyComparison(
 		)
 	}
 }
+
+func TestScenarioRunnerReportsLifecycleEvents(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	benchmarkStartedAt := time.Date(
+		2026,
+		time.August,
+		1,
+		10,
+		0,
+		0,
+		0,
+		time.UTC,
+	)
+
+	events := make(
+		[]ProgressEvent,
+		0,
+	)
+
+	reporter := ProgressReporterFunc(
+		func(event ProgressEvent) {
+			events = append(
+				events,
+				event,
+			)
+		},
+	)
+
+	directResult := successfulPathResult(
+		10,
+		2,
+		100,
+		100,
+	)
+
+	forwardedResult := successfulPathResult(
+		10,
+		3,
+		80,
+		80,
+	)
+
+	fakeRunner := &recordedPathRunner{
+		results: []PathResult{
+			successfulPathResult(
+				2,
+				1,
+				100,
+				100,
+			),
+			successfulPathResult(
+				2,
+				1,
+				100,
+				100,
+			),
+			directResult,
+			forwardedResult,
+		},
+	}
+
+	scenarioRunner := &ScenarioRunner{
+		newRunner: func(
+			string,
+			time.Duration,
+		) (pathRunner, error) {
+			return fakeRunner, nil
+		},
+	}
+
+	config := validScenarioConfig()
+
+	config.ProgressReporter =
+		reporter
+
+	config.BenchmarkStartedAt =
+		benchmarkStartedAt
+
+	config.ScenarioIndex = 2
+	config.ScenarioCount = 4
+
+	result, err := scenarioRunner.RunScenario(
+		context.Background(),
+		config,
+	)
+	if err != nil {
+		t.Fatalf(
+			"run benchmark scenario: %v",
+			err,
+		)
+	}
+
+	if len(events) != 2 {
+		t.Fatalf(
+			"unexpected scenario event count: got %d, want 2: %+v",
+			len(events),
+			events,
+		)
+	}
+
+	started := events[0]
+
+	if started.Type !=
+		ProgressEventScenarioStarted {
+		t.Fatalf(
+			"unexpected first event type: got %q, want %q",
+			started.Type,
+			ProgressEventScenarioStarted,
+		)
+	}
+
+	assertScenarioProgressMetadata(
+		t,
+		started,
+		config,
+	)
+
+	if started.ScenarioResult != nil {
+		t.Fatal(
+			"scenario-started event unexpectedly contains a result",
+		)
+	}
+
+	if started.Current != 0 {
+		t.Fatalf(
+			"unexpected scenario-started progress: got %d, want 0",
+			started.Current,
+		)
+	}
+
+	completed := events[1]
+
+	if completed.Type !=
+		ProgressEventScenarioCompleted {
+		t.Fatalf(
+			"unexpected final event type: got %q, want %q",
+			completed.Type,
+			ProgressEventScenarioCompleted,
+		)
+	}
+
+	assertScenarioProgressMetadata(
+		t,
+		completed,
+		config,
+	)
+
+	if completed.Phase !=
+		ProgressPhaseForwarded {
+		t.Fatalf(
+			"unexpected completion phase: got %q, want %q",
+			completed.Phase,
+			ProgressPhaseForwarded,
+		)
+	}
+
+	if completed.Current !=
+		config.QueryCount {
+		t.Fatalf(
+			"unexpected completion progress: got %d, want %d",
+			completed.Current,
+			config.QueryCount,
+		)
+	}
+
+	if completed.Successful !=
+		forwardedResult.Requests.Successful {
+		t.Fatalf(
+			"unexpected completion success count: got %d, want %d",
+			completed.Successful,
+			forwardedResult.Requests.Successful,
+		)
+	}
+
+	if completed.ScenarioResult == nil {
+		t.Fatal(
+			"scenario-completed event does not contain the scenario result",
+		)
+	}
+
+	reported := completed.ScenarioResult
+
+	if reported.Name != result.Name {
+		t.Fatalf(
+			"unexpected reported scenario name: got %q, want %q",
+			reported.Name,
+			result.Name,
+		)
+	}
+
+	if reported.Direct.Requests !=
+		result.Direct.Requests {
+		t.Fatalf(
+			"unexpected reported direct requests: got %+v, want %+v",
+			reported.Direct.Requests,
+			result.Direct.Requests,
+		)
+	}
+
+	if reported.Forwarded.Requests !=
+		result.Forwarded.Requests {
+		t.Fatalf(
+			"unexpected reported forwarded requests: got %+v, want %+v",
+			reported.Forwarded.Requests,
+			result.Forwarded.Requests,
+		)
+	}
+
+	if reported.
+		Comparison.
+		LatencyOverheadMilliseconds.
+		Mean != 1 {
+		t.Fatalf(
+			"unexpected reported mean overhead: got %f, want 1",
+			reported.
+				Comparison.
+				LatencyOverheadMilliseconds.
+				Mean,
+		)
+	}
+}
+
+func TestScenarioRunnerPassesProgressMetadataToPaths(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	benchmarkStartedAt := time.Date(
+		2026,
+		time.August,
+		1,
+		10,
+		30,
+		0,
+		0,
+		time.UTC,
+	)
+
+	reporter := ProgressReporterFunc(
+		func(ProgressEvent) {},
+	)
+
+	fakeRunner := &recordedPathRunner{
+		results: []PathResult{
+			successfulPathResult(
+				2,
+				1,
+				100,
+				100,
+			),
+			successfulPathResult(
+				2,
+				1,
+				100,
+				100,
+			),
+			successfulPathResult(
+				10,
+				2,
+				100,
+				100,
+			),
+			successfulPathResult(
+				10,
+				3,
+				80,
+				80,
+			),
+		},
+	}
+
+	scenarioRunner := &ScenarioRunner{
+		newRunner: func(
+			string,
+			time.Duration,
+		) (pathRunner, error) {
+			return fakeRunner, nil
+		},
+	}
+
+	config := validScenarioConfig()
+
+	config.ProgressReporter =
+		reporter
+
+	config.BenchmarkStartedAt =
+		benchmarkStartedAt
+
+	config.ScenarioIndex = 3
+	config.ScenarioCount = 4
+
+	_, err := scenarioRunner.RunScenario(
+		context.Background(),
+		config,
+	)
+	if err != nil {
+		t.Fatalf(
+			"run benchmark scenario: %v",
+			err,
+		)
+	}
+
+	if len(fakeRunner.configs) != 4 {
+		t.Fatalf(
+			"unexpected path count: got %d, want 4",
+			len(fakeRunner.configs),
+		)
+	}
+
+	expectedPhases := []string{
+		ProgressPhaseWarmupDirect,
+		ProgressPhaseWarmupForwarded,
+		ProgressPhaseDirect,
+		ProgressPhaseForwarded,
+	}
+
+	for index, pathConfig := range fakeRunner.configs {
+		if pathConfig.ProgressReporter == nil {
+			t.Fatalf(
+				"path %d does not contain a progress reporter",
+				index,
+			)
+		}
+
+		if !pathConfig.
+			BenchmarkStartedAt.
+			Equal(
+				benchmarkStartedAt,
+			) {
+			t.Fatalf(
+				"unexpected path %d benchmark start: got %s, want %s",
+				index,
+				pathConfig.BenchmarkStartedAt,
+				benchmarkStartedAt,
+			)
+		}
+
+		if pathConfig.ScenarioName !=
+			config.Name {
+			t.Fatalf(
+				"unexpected path %d scenario name: got %q, want %q",
+				index,
+				pathConfig.ScenarioName,
+				config.Name,
+			)
+		}
+
+		if pathConfig.ScenarioIndex != 3 {
+			t.Fatalf(
+				"unexpected path %d scenario index: got %d, want 3",
+				index,
+				pathConfig.ScenarioIndex,
+			)
+		}
+
+		if pathConfig.ScenarioCount != 4 {
+			t.Fatalf(
+				"unexpected path %d scenario count: got %d, want 4",
+				index,
+				pathConfig.ScenarioCount,
+			)
+		}
+
+		if pathConfig.Phase !=
+			expectedPhases[index] {
+			t.Fatalf(
+				"unexpected path %d phase: got %q, want %q",
+				index,
+				pathConfig.Phase,
+				expectedPhases[index],
+			)
+		}
+	}
+}
+
+func TestScenarioRunnerReportsLifecycleWithoutWarmup(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	events := make(
+		[]ProgressEvent,
+		0,
+	)
+
+	reporter := ProgressReporterFunc(
+		func(event ProgressEvent) {
+			events = append(
+				events,
+				event,
+			)
+		},
+	)
+
+	fakeRunner := &recordedPathRunner{
+		results: []PathResult{
+			successfulPathResult(
+				10,
+				2,
+				100,
+				100,
+			),
+			successfulPathResult(
+				10,
+				3,
+				80,
+				80,
+			),
+		},
+	}
+
+	scenarioRunner := &ScenarioRunner{
+		newRunner: func(
+			string,
+			time.Duration,
+		) (pathRunner, error) {
+			return fakeRunner, nil
+		},
+	}
+
+	config := validScenarioConfig()
+	config.WarmupQueries = 0
+	config.ProgressReporter = reporter
+	config.ScenarioIndex = 1
+	config.ScenarioCount = 4
+
+	_, err := scenarioRunner.RunScenario(
+		context.Background(),
+		config,
+	)
+	if err != nil {
+		t.Fatalf(
+			"run benchmark scenario: %v",
+			err,
+		)
+	}
+
+	if len(events) != 2 {
+		t.Fatalf(
+			"unexpected event count without warmup: got %d, want 2",
+			len(events),
+		)
+	}
+
+	if events[0].Type !=
+		ProgressEventScenarioStarted {
+		t.Fatalf(
+			"unexpected first event: %q",
+			events[0].Type,
+		)
+	}
+
+	if events[1].Type !=
+		ProgressEventScenarioCompleted {
+		t.Fatalf(
+			"unexpected final event: %q",
+			events[1].Type,
+		)
+	}
+
+	if events[1].ScenarioResult == nil {
+		t.Fatal(
+			"completed event does not contain a scenario result",
+		)
+	}
+}
+
+func TestScenarioRunnerWorksWithoutProgressReporter(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	fakeRunner := &recordedPathRunner{
+		results: []PathResult{
+			successfulPathResult(
+				2,
+				1,
+				100,
+				100,
+			),
+			successfulPathResult(
+				2,
+				1,
+				100,
+				100,
+			),
+			successfulPathResult(
+				10,
+				2,
+				100,
+				100,
+			),
+			successfulPathResult(
+				10,
+				3,
+				80,
+				80,
+			),
+		},
+	}
+
+	scenarioRunner := &ScenarioRunner{
+		newRunner: func(
+			string,
+			time.Duration,
+		) (pathRunner, error) {
+			return fakeRunner, nil
+		},
+	}
+
+	config := validScenarioConfig()
+	config.ProgressReporter = nil
+
+	result, err := scenarioRunner.RunScenario(
+		context.Background(),
+		config,
+	)
+	if err != nil {
+		t.Fatalf(
+			"run benchmark scenario: %v",
+			err,
+		)
+	}
+
+	if result.Name != config.Name {
+		t.Fatalf(
+			"unexpected scenario name: got %q, want %q",
+			result.Name,
+			config.Name,
+		)
+	}
+}
+
+func assertScenarioProgressMetadata(
+	t *testing.T,
+	event ProgressEvent,
+	config ScenarioConfig,
+) {
+	t.Helper()
+
+	if event.ScenarioName !=
+		config.Name {
+		t.Fatalf(
+			"unexpected scenario name: got %q, want %q",
+			event.ScenarioName,
+			config.Name,
+		)
+	}
+
+	if event.ScenarioIndex !=
+		config.ScenarioIndex {
+		t.Fatalf(
+			"unexpected scenario index: got %d, want %d",
+			event.ScenarioIndex,
+			config.ScenarioIndex,
+		)
+	}
+
+	if event.ScenarioCount !=
+		config.ScenarioCount {
+		t.Fatalf(
+			"unexpected scenario count: got %d, want %d",
+			event.ScenarioCount,
+			config.ScenarioCount,
+		)
+	}
+
+	if !event.BenchmarkStartedAt.Equal(
+		config.BenchmarkStartedAt,
+	) {
+		t.Fatalf(
+			"unexpected benchmark start: got %s, want %s",
+			event.BenchmarkStartedAt,
+			config.BenchmarkStartedAt,
+		)
+	}
+
+	if event.OccurredAt.IsZero() {
+		t.Fatal(
+			"progress event occurrence time is zero",
+		)
+	}
+
+	if event.Elapsed < 0 {
+		t.Fatalf(
+			"progress event has negative elapsed time: %s",
+			event.Elapsed,
+		)
+	}
+}

@@ -29,7 +29,8 @@ func NewRunner(
 	protocol string,
 	timeout time.Duration,
 ) (*Runner, error) {
-	if protocol != ProtocolUDP && protocol != ProtocolTCP {
+	if protocol != ProtocolUDP &&
+		protocol != ProtocolTCP {
 		return nil, fmt.Errorf(
 			"unsupported DNS protocol %q",
 			protocol,
@@ -70,7 +71,8 @@ func (r *Runner) RunPath(
 		)
 	}
 
-	if r.protocol != "" && r.protocol != config.Protocol {
+	if r.protocol != "" &&
+		r.protocol != config.Protocol {
 		return PathResult{}, fmt.Errorf(
 			"runner protocol %q does not match path protocol %q",
 			r.protocol,
@@ -85,7 +87,31 @@ func (r *Runner) RunPath(
 		)
 	}
 
-	startedAt := time.Now()
+	reporter := resolvedProgressReporter(
+		config.ProgressReporter,
+	)
+
+	pathStartedAt := time.Now()
+
+	benchmarkStartedAt :=
+		config.BenchmarkStartedAt
+
+	if benchmarkStartedAt.IsZero() {
+		benchmarkStartedAt = pathStartedAt
+	}
+
+	reportProgress(
+		reporter,
+		config,
+		ProgressEventPhaseStarted,
+		0,
+		0,
+		0,
+		0,
+		benchmarkStartedAt,
+		pathStartedAt,
+		nil,
+	)
 
 	observations := make(
 		chan queryObservation,
@@ -145,34 +171,68 @@ func (r *Runner) RunPath(
 		config.QueryCount,
 	)
 
+	completed := 0
+	lastProgressAt := time.Time{}
+
 	for observation := range observations {
+		completed++
+
 		if observation.err != nil {
 			recordFailure(
 				&result,
 				observation.failure,
 			)
+		} else {
+			result.Requests.Successful++
 
-			continue
+			latencies = append(
+				latencies,
+				observation.latency,
+			)
 		}
 
-		result.Requests.Successful++
+		now := time.Now()
 
-		latencies = append(
-			latencies,
-			observation.latency,
-		)
+		if shouldReportProgress(
+			completed,
+			config.QueryCount,
+			lastProgressAt,
+			now,
+		) {
+			reportProgress(
+				reporter,
+				config,
+				ProgressEventPhaseProgress,
+				completed,
+				result.Requests.Successful,
+				result.Requests.Failed,
+				result.Requests.Timeouts,
+				benchmarkStartedAt,
+				pathStartedAt,
+				nil,
+			)
+
+			lastProgressAt = now
+		}
 	}
 
-	unscheduled := config.QueryCount - int(scheduled.Load())
+	unscheduled :=
+		config.QueryCount -
+			int(scheduled.Load())
+
 	if unscheduled > 0 {
 		recordUnscheduledFailures(
 			&result,
 			unscheduled,
 			ctx.Err(),
 		)
+
+		completed += unscheduled
 	}
 
-	elapsed := time.Since(startedAt)
+	elapsed := time.Since(
+		pathStartedAt,
+	)
 
 	result.DurationMilliseconds = round(
 		durationMilliseconds(elapsed),
@@ -193,9 +253,10 @@ func (r *Runner) RunPath(
 	)
 
 	if len(latencies) > 0 {
-		statistics, err := CalculateLatencyStatistics(
-			latencies,
-		)
+		statistics, err :=
+			CalculateLatencyStatistics(
+				latencies,
+			)
 		if err != nil {
 			return PathResult{}, fmt.Errorf(
 				"calculate path latency statistics: %w",
@@ -203,12 +264,26 @@ func (r *Runner) RunPath(
 			)
 		}
 
-		result.SuccessfulRequestLatencyMilliseconds =
+		result.
+			SuccessfulRequestLatencyMilliseconds =
 			successfulLatencyStatistics(
 				len(latencies),
 				statistics,
 			)
 	}
+
+	reportProgress(
+		reporter,
+		config,
+		ProgressEventPhaseCompleted,
+		completed,
+		result.Requests.Successful,
+		result.Requests.Failed,
+		result.Requests.Timeouts,
+		benchmarkStartedAt,
+		pathStartedAt,
+		&result,
+	)
 
 	return result, nil
 }
@@ -252,8 +327,10 @@ func (r *Runner) executeQuery(
 	)
 	if err != nil {
 		return queryObservation{
-			failure: classifyExchangeError(err),
-			err:     err,
+			failure: classifyExchangeError(
+				err,
+			),
+			err: err,
 		}
 	}
 
@@ -291,7 +368,130 @@ func (r *Runner) executeQuery(
 	}
 }
 
-func classifyExchangeError(err error) failureKind {
+func reportProgress(
+	reporter ProgressReporter,
+	config PathConfig,
+	eventType string,
+	current int,
+	successful int,
+	failed int,
+	timeouts int,
+	benchmarkStartedAt time.Time,
+	phaseStartedAt time.Time,
+	pathResult *PathResult,
+) {
+	if reporter == nil {
+		return
+	}
+
+	now := time.Now()
+
+	path := ""
+
+	switch config.Phase {
+	case ProgressPhaseWarmupDirect,
+		ProgressPhaseDirect:
+		path = "direct"
+
+	case ProgressPhaseWarmupForwarded,
+		ProgressPhaseForwarded:
+		path = "forwarded"
+	}
+
+	phaseElapsed := now.Sub(
+		phaseStartedAt,
+	)
+
+	reporter.ReportProgress(
+		ProgressEvent{
+			Type: eventType,
+
+			BenchmarkStartedAt: benchmarkStartedAt,
+
+			OccurredAt: now,
+
+			ScenarioName: config.ScenarioName,
+
+			ScenarioIndex: config.ScenarioIndex,
+
+			ScenarioCount: config.ScenarioCount,
+
+			Phase: config.Phase,
+
+			Path: path,
+
+			Current: current,
+
+			Total: config.QueryCount,
+
+			Successful: successful,
+
+			Failed: failed,
+
+			Timeouts: timeouts,
+
+			Elapsed: now.Sub(
+				benchmarkStartedAt,
+			),
+
+			PhaseElapsed: phaseElapsed,
+
+			AttemptedQueriesPerSecond: liveQueriesPerSecond(
+				current,
+				phaseElapsed,
+			),
+
+			SuccessfulQueriesPerSecond: liveQueriesPerSecond(
+				successful,
+				phaseElapsed,
+			),
+
+			PathResult: pathResult,
+		},
+	)
+}
+
+func shouldReportProgress(
+	current int,
+	total int,
+	lastProgressAt time.Time,
+	now time.Time,
+) bool {
+	if current <= 0 {
+		return false
+	}
+
+	if current >= total {
+		return true
+	}
+
+	if lastProgressAt.IsZero() {
+		return true
+	}
+
+	return now.Sub(lastProgressAt) >=
+		time.Second
+}
+
+func liveQueriesPerSecond(
+	queryCount int,
+	elapsed time.Duration,
+) float64 {
+	if queryCount <= 0 ||
+		elapsed <= 0 {
+		return 0
+	}
+
+	return round(
+		float64(queryCount)/
+			elapsed.Seconds(),
+		6,
+	)
+}
+
+func classifyExchangeError(
+	err error,
+) failureKind {
 	if err == nil {
 		return failureNone
 	}
@@ -301,12 +501,22 @@ func classifyExchangeError(err error) failureKind {
 	}
 
 	var networkError net.Error
-	if errors.As(err, &networkError) {
+
+	if errors.As(
+		err,
+		&networkError,
+	) {
 		return failureNetwork
 	}
 
-	if errors.Is(err, context.Canceled) ||
-		errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(
+		err,
+		context.Canceled,
+	) ||
+		errors.Is(
+			err,
+			context.DeadlineExceeded,
+		) {
 		return failureInternal
 	}
 
@@ -350,20 +560,27 @@ func recordUnscheduledFailures(
 	count int,
 	contextErr error,
 ) {
-	if result == nil || count <= 0 {
+	if result == nil ||
+		count <= 0 {
 		return
 	}
 
 	result.Requests.Failed += count
 
-	if errors.Is(contextErr, context.DeadlineExceeded) {
+	if errors.Is(
+		contextErr,
+		context.DeadlineExceeded,
+	) {
 		result.Requests.Timeouts += count
 		result.Failures.Timeout += count
 
 		return
 	}
 
-	if errors.Is(contextErr, context.Canceled) {
+	if errors.Is(
+		contextErr,
+		context.Canceled,
+	) {
 		result.Failures.Internal += count
 
 		return
@@ -379,22 +596,29 @@ func calculateRequestRates(
 		return RequestRates{}
 	}
 
-	attempted := float64(requests.Attempted)
+	attempted := float64(
+		requests.Attempted,
+	)
 
 	return RequestRates{
 		SuccessPercent: round(
-			float64(requests.Successful)/
-				attempted*100,
+			float64(
+				requests.Successful,
+			)/attempted*100,
 			6,
 		),
+
 		FailurePercent: round(
-			float64(requests.Failed)/
-				attempted*100,
+			float64(
+				requests.Failed,
+			)/attempted*100,
 			6,
 		),
+
 		TimeoutPercent: round(
-			float64(requests.Timeouts)/
-				attempted*100,
+			float64(
+				requests.Timeouts,
+			)/attempted*100,
 			6,
 		),
 	}
@@ -408,17 +632,21 @@ func calculateThroughput(
 		return ThroughputMetrics{}
 	}
 
-	elapsedSeconds := elapsed.Seconds()
+	elapsedSeconds :=
+		elapsed.Seconds()
 
 	return ThroughputMetrics{
 		AttemptedQueriesPerSecond: round(
-			float64(requests.Attempted)/
-				elapsedSeconds,
+			float64(
+				requests.Attempted,
+			)/elapsedSeconds,
 			6,
 		),
+
 		SuccessfulQueriesPerSecond: round(
-			float64(requests.Successful)/
-				elapsedSeconds,
+			float64(
+				requests.Successful,
+			)/elapsedSeconds,
 			6,
 		),
 	}
@@ -439,13 +667,20 @@ func successfulLatencyStatistics(
 	}
 }
 
-func isTimeout(err error) bool {
-	if errors.Is(err, context.DeadlineExceeded) {
+func isTimeout(
+	err error,
+) bool {
+	if errors.Is(
+		err,
+		context.DeadlineExceeded,
+	) {
 		return true
 	}
 
 	var networkError net.Error
 
-	return errors.As(err, &networkError) &&
-		networkError.Timeout()
+	return errors.As(
+		err,
+		&networkError,
+	) && networkError.Timeout()
 }

@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
-	"github.com/miekg/dns"
 )
 
 // ScenarioConfig defines one direct-versus-forwarded DNS benchmark.
@@ -23,12 +21,21 @@ type ScenarioConfig struct {
 	QueryCount    int
 	Concurrency   int
 	Timeout       time.Duration
+
+	ProgressReporter ProgressReporter
+
+	BenchmarkStartedAt time.Time
+
+	ScenarioIndex int
+	ScenarioCount int
 }
 
 // Validate verifies that a benchmark scenario can be executed.
 func (c ScenarioConfig) Validate() error {
 	if c.Name == "" {
-		return errors.New("scenario name is required")
+		return errors.New(
+			"scenario name is required",
+		)
 	}
 
 	if c.WarmupQueries < 0 {
@@ -41,6 +48,7 @@ func (c ScenarioConfig) Validate() error {
 		c.DirectAddress,
 		c.QueryCount,
 		c.Concurrency,
+		ProgressPhaseDirect,
 	)
 
 	if err := directConfig.Validate(); err != nil {
@@ -54,6 +62,7 @@ func (c ScenarioConfig) Validate() error {
 		c.ForwardedAddress,
 		c.QueryCount,
 		c.Concurrency,
+		ProgressPhaseForwarded,
 	)
 
 	if err := forwardedConfig.Validate(); err != nil {
@@ -70,6 +79,7 @@ func (c ScenarioConfig) pathConfig(
 	address string,
 	queryCount int,
 	concurrency int,
+	phase string,
 ) PathConfig {
 	return PathConfig{
 		Address:     address,
@@ -79,6 +89,18 @@ func (c ScenarioConfig) pathConfig(
 		QueryCount:  queryCount,
 		Concurrency: concurrency,
 		Timeout:     c.Timeout,
+
+		ProgressReporter: c.ProgressReporter,
+
+		BenchmarkStartedAt: c.BenchmarkStartedAt,
+
+		ScenarioName: c.Name,
+
+		ScenarioIndex: c.ScenarioIndex,
+
+		ScenarioCount: c.ScenarioCount,
+
+		Phase: phase,
 	}
 }
 
@@ -106,7 +128,10 @@ func NewScenarioRunner() *ScenarioRunner {
 			protocol string,
 			timeout time.Duration,
 		) (pathRunner, error) {
-			return NewRunner(protocol, timeout)
+			return NewRunner(
+				protocol,
+				timeout,
+			)
 		},
 	}
 }
@@ -117,7 +142,8 @@ func (r *ScenarioRunner) RunScenario(
 	ctx context.Context,
 	config ScenarioConfig,
 ) (ScenarioResult, error) {
-	if r == nil || r.newRunner == nil {
+	if r == nil ||
+		r.newRunner == nil {
 		return ScenarioResult{}, errors.New(
 			"scenario runner is not initialized",
 		)
@@ -135,6 +161,33 @@ func (r *ScenarioRunner) RunScenario(
 			err,
 		)
 	}
+
+	reporter := resolvedProgressReporter(
+		config.ProgressReporter,
+	)
+
+	benchmarkStartedAt :=
+		config.BenchmarkStartedAt
+
+	if benchmarkStartedAt.IsZero() {
+		benchmarkStartedAt = time.Now()
+
+		config.BenchmarkStartedAt =
+			benchmarkStartedAt
+	}
+
+	reportScenarioEvent(
+		reporter,
+		config,
+		ProgressEventScenarioStarted,
+		"",
+		0,
+		0,
+		0,
+		0,
+		benchmarkStartedAt,
+		nil,
+	)
 
 	runner, err := r.newRunner(
 		config.Protocol,
@@ -161,6 +214,7 @@ func (r *ScenarioRunner) RunScenario(
 				config.DirectAddress,
 				config.WarmupQueries,
 				1,
+				ProgressPhaseWarmupDirect,
 			),
 		); err != nil {
 			return ScenarioResult{}, fmt.Errorf(
@@ -176,6 +230,7 @@ func (r *ScenarioRunner) RunScenario(
 				config.ForwardedAddress,
 				config.WarmupQueries,
 				1,
+				ProgressPhaseWarmupForwarded,
 			),
 		); err != nil {
 			return ScenarioResult{}, fmt.Errorf(
@@ -191,6 +246,7 @@ func (r *ScenarioRunner) RunScenario(
 			config.DirectAddress,
 			config.QueryCount,
 			config.Concurrency,
+			ProgressPhaseDirect,
 		),
 	)
 	if err != nil {
@@ -206,6 +262,7 @@ func (r *ScenarioRunner) RunScenario(
 			config.ForwardedAddress,
 			config.QueryCount,
 			config.Concurrency,
+			ProgressPhaseForwarded,
 		),
 	)
 	if err != nil {
@@ -215,7 +272,7 @@ func (r *ScenarioRunner) RunScenario(
 		)
 	}
 
-	return ScenarioResult{
+	result := ScenarioResult{
 		Name:              config.Name,
 		Protocol:          config.Protocol,
 		Concurrency:       config.Concurrency,
@@ -231,7 +288,22 @@ func (r *ScenarioRunner) RunScenario(
 			directResult,
 			forwardedResult,
 		),
-	}, nil
+	}
+
+	reportScenarioEvent(
+		reporter,
+		config,
+		ProgressEventScenarioCompleted,
+		ProgressPhaseForwarded,
+		config.QueryCount,
+		forwardedResult.Requests.Successful,
+		forwardedResult.Requests.Failed,
+		forwardedResult.Requests.Timeouts,
+		benchmarkStartedAt,
+		&result,
+	)
+
+	return result, nil
 }
 
 func warmupPath(
@@ -239,12 +311,16 @@ func warmupPath(
 	runner pathRunner,
 	config PathConfig,
 ) error {
-	result, err := runner.RunPath(ctx, config)
+	result, err := runner.RunPath(
+		ctx,
+		config,
+	)
 	if err != nil {
 		return err
 	}
 
-	if result.Requests.Successful != config.QueryCount {
+	if result.Requests.Successful !=
+		config.QueryCount {
 		return fmt.Errorf(
 			"%d of %d warmup queries succeeded",
 			result.Requests.Successful,
@@ -253,6 +329,59 @@ func warmupPath(
 	}
 
 	return nil
+}
+
+func reportScenarioEvent(
+	reporter ProgressReporter,
+	config ScenarioConfig,
+	eventType string,
+	phase string,
+	current int,
+	successful int,
+	failed int,
+	timeouts int,
+	benchmarkStartedAt time.Time,
+	scenarioResult *ScenarioResult,
+) {
+	if reporter == nil {
+		return
+	}
+
+	now := time.Now()
+
+	reporter.ReportProgress(
+		ProgressEvent{
+			Type: eventType,
+
+			BenchmarkStartedAt: benchmarkStartedAt,
+
+			OccurredAt: now,
+
+			ScenarioName: config.Name,
+
+			ScenarioIndex: config.ScenarioIndex,
+
+			ScenarioCount: config.ScenarioCount,
+
+			Phase: phase,
+
+			Current: current,
+
+			Total: config.QueryCount,
+
+			Successful: successful,
+
+			Failed: failed,
+
+			Timeouts: timeouts,
+
+			Elapsed: now.Sub(
+				benchmarkStartedAt,
+			),
+
+			ScenarioResult: scenarioResult,
+		},
+	)
 }
 
 func calculateScenarioComparison(
@@ -271,14 +400,17 @@ func calculateScenarioComparison(
 				directLatency.Mean,
 				forwardedLatency.Mean,
 			),
+
 			Median: difference(
 				directLatency.Median,
 				forwardedLatency.Median,
 			),
+
 			P95: difference(
 				directLatency.P95,
 				forwardedLatency.P95,
 			),
+
 			P99: difference(
 				directLatency.P99,
 				forwardedLatency.P99,
@@ -290,14 +422,17 @@ func calculateScenarioComparison(
 				directLatency.Mean,
 				forwardedLatency.Mean,
 			),
+
 			Median: percentageChange(
 				directLatency.Median,
 				forwardedLatency.Median,
 			),
+
 			P95: percentageChange(
 				directLatency.P95,
 				forwardedLatency.P95,
 			),
+
 			P99: percentageChange(
 				directLatency.P99,
 				forwardedLatency.P99,
@@ -306,31 +441,53 @@ func calculateScenarioComparison(
 
 		ThroughputChangePercent: ThroughputComparison{
 			Attempted: percentageChange(
-				direct.Throughput.
+				direct.
+					Throughput.
 					AttemptedQueriesPerSecond,
-				forwarded.Throughput.
+				forwarded.
+					Throughput.
 					AttemptedQueriesPerSecond,
 			),
+
 			Successful: percentageChange(
-				direct.Throughput.
+				direct.
+					Throughput.
 					SuccessfulQueriesPerSecond,
-				forwarded.Throughput.
+				forwarded.
+					Throughput.
 					SuccessfulQueriesPerSecond,
 			),
 		},
 
 		ReliabilityDeltaPercentagePoints: ReliabilityComparison{
 			Success: percentagePointDifference(
-				direct.Rates.SuccessPercent,
-				forwarded.Rates.SuccessPercent,
+				direct.
+					Rates.
+					SuccessPercent,
+
+				forwarded.
+					Rates.
+					SuccessPercent,
 			),
+
 			Failure: percentagePointDifference(
-				direct.Rates.FailurePercent,
-				forwarded.Rates.FailurePercent,
+				direct.
+					Rates.
+					FailurePercent,
+
+				forwarded.
+					Rates.
+					FailurePercent,
 			),
+
 			Timeout: percentagePointDifference(
-				direct.Rates.TimeoutPercent,
-				forwarded.Rates.TimeoutPercent,
+				direct.
+					Rates.
+					TimeoutPercent,
+
+				forwarded.
+					Rates.
+					TimeoutPercent,
 			),
 		},
 	}
@@ -362,7 +519,9 @@ func percentageChange(
 	}
 
 	return round(
-		(value-baseline)/baseline*100,
+		(value-baseline)/
+			baseline*
+			100,
 		6,
 	)
 }
@@ -380,7 +539,3 @@ func percentagePointDifference(
 		6,
 	)
 }
-
-// Ensure the default benchmark query type remains available to callers of
-// this package without introducing another query-type representation.
-var _ = dns.TypeA
