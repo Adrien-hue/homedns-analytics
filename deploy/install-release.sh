@@ -32,6 +32,15 @@ require_root() {
   fi
 }
 
+archive_contains() {
+  local archive="$1"
+  local expected_path="$2"
+
+  tar -tzf "${archive}" |
+    sed 's#^\./##' |
+    grep -Fqx "${expected_path}"
+}
+
 validate_archive() {
   local archive="$1"
 
@@ -44,10 +53,11 @@ validate_archive() {
   local required_path
 
   for required_path in \
-    "./RELEASE" \
-    "./${DNS_BINARY_NAME}"; do
-    tar -tzf "${archive}" |
-      grep -qx "${required_path}" ||
+    "RELEASE" \
+    "${DNS_BINARY_NAME}"; do
+    archive_contains \
+      "${archive}" \
+      "${required_path}" ||
       fail "archive does not contain ${required_path}"
   done
 }
@@ -55,8 +65,17 @@ validate_archive() {
 read_release_value() {
   local archive="$1"
   local key="$2"
+  local release_content
 
-  tar -xOf "${archive}" ./RELEASE |
+  if ! release_content="$(
+    tar -xOf "${archive}" RELEASE 2>/dev/null
+  )"; then
+    release_content="$(
+      tar -xOf "${archive}" ./RELEASE
+    )"
+  fi
+
+  printf '%s\n' "${release_content}" |
     awk -F= -v wanted_key="${key}" '
       $1 == wanted_key {
         print substr($0, index($0, "=") + 1)
