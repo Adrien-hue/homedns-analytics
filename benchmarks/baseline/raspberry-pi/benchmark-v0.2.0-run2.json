@@ -1,0 +1,251 @@
+{
+  "schema_version": "1.0",
+  "benchmark": {
+    "id": "benchmark-20260729-180716",
+    "created_at": "2026-07-29T18:07:16.201200541Z",
+    "started_at": "2026-07-29T18:07:16.201200541Z",
+    "ended_at": "2026-07-29T18:07:21.624058634Z",
+    "duration_ms": 5422.858093
+  },
+  "project": {
+    "name": "homedns-analytics",
+    "version": "v0.2.0-rc1",
+    "git_commit": "fce8f87",
+    "git_branch": "",
+    "dirty": null
+  },
+  "environment": {
+    "hostname": "homedns",
+    "operating_system": "linux",
+    "kernel": "",
+    "architecture": "arm64",
+    "cpu_model": "",
+    "logical_cpus": 4,
+    "memory_total_bytes": null,
+    "go_version": "go1.26.5"
+  },
+  "configuration": {
+    "upstream_address": "1.1.1.1:53",
+    "homedns_address": "127.0.0.1:5300",
+    "health_address": "127.0.0.1:8081",
+    "query_names": [
+      "example.com.",
+      "cloudflare.com.",
+      "google.com.",
+      "github.com."
+    ],
+    "query_type": "A",
+    "warmup_queries": 10,
+    "timeout_seconds": 3
+  },
+  "scenarios": [
+    {
+      "name": "udp-sequential",
+      "protocol": "udp",
+      "concurrency": 1,
+      "query_count": 100,
+      "direct": {
+        "requests": 100,
+        "successful": 100,
+        "failed": 0,
+        "timeouts": 0,
+        "duration_ms": 545.90647,
+        "queries_per_second": 183.181562,
+        "latency_ms": {
+          "minimum": 3.898373,
+          "mean": 5.186237,
+          "median": 4.905791,
+          "p95": 6.733544,
+          "p99": 12.30208,
+          "maximum": 13.506937
+        }
+      },
+      "forwarded": {
+        "requests": 100,
+        "successful": 100,
+        "failed": 0,
+        "timeouts": 0,
+        "duration_ms": 657.918359,
+        "queries_per_second": 151.994543,
+        "latency_ms": {
+          "minimum": 4.657017,
+          "mean": 6.344547,
+          "median": 5.65954,
+          "p95": 11.017996,
+          "p99": 23.607728,
+          "maximum": 33.640728
+        }
+      },
+      "overhead": {
+        "mean_latency_ms": 1.15831,
+        "median_latency_ms": 0.753749,
+        "p95_latency_ms": 4.284452,
+        "p99_latency_ms": 11.305648,
+        "mean_latency_percent": 22.334305,
+        "throughput_percent": 17.025195
+      }
+    },
+    {
+      "name": "udp-concurrent",
+      "protocol": "udp",
+      "concurrency": 10,
+      "query_count": 100,
+      "direct": {
+        "requests": 100,
+        "successful": 100,
+        "failed": 0,
+        "timeouts": 0,
+        "duration_ms": 206.591229,
+        "queries_per_second": 484.047655,
+        "latency_ms": {
+          "minimum": 6.088887,
+          "mean": 20.004516,
+          "median": 15.412738,
+          "p95": 50.570582,
+          "p99": 52.484324,
+          "maximum": 52.572804
+        }
+      },
+      "forwarded": {
+        "requests": 100,
+        "successful": 100,
+        "failed": 0,
+        "timeouts": 0,
+        "duration_ms": 153.766863,
+        "queries_per_second": 650.335177,
+        "latency_ms": {
+          "minimum": 7.746382,
+          "mean": 14.558489,
+          "median": 15.131698,
+          "p95": 17.170165,
+          "p99": 17.808774,
+          "maximum": 18.33739
+        }
+      },
+      "overhead": {
+        "mean_latency_ms": -5.446027,
+        "median_latency_ms": -0.28104,
+        "p95_latency_ms": -33.400417,
+        "p99_latency_ms": -34.67555,
+        "mean_latency_percent": -27.223988,
+        "throughput_percent": -34.353544
+      }
+    },
+    {
+      "name": "tcp-sequential",
+      "protocol": "tcp",
+      "concurrency": 1,
+      "query_count": 100,
+      "direct": {
+        "requests": 100,
+        "successful": 100,
+        "failed": 0,
+        "timeouts": 0,
+        "duration_ms": 994.478297,
+        "queries_per_second": 100.555236,
+        "latency_ms": {
+          "minimum": 3.003532,
+          "mean": 4.460539,
+          "median": 4.08194,
+          "p95": 5.775586,
+          "p99": 12.546525,
+          "maximum": 18.59489
+        }
+      },
+      "forwarded": {
+        "requests": 100,
+        "successful": 100,
+        "failed": 0,
+        "timeouts": 0,
+        "duration_ms": 1092.331896,
+        "queries_per_second": 91.547267,
+        "latency_ms": {
+          "minimum": 6.778104,
+          "mean": 10.387009,
+          "median": 9.115466,
+          "p95": 15.169749,
+          "p99": 34.105899,
+          "maximum": 35.752389
+        }
+      },
+      "overhead": {
+        "mean_latency_ms": 5.92647,
+        "median_latency_ms": 5.033526,
+        "p95_latency_ms": 9.394163,
+        "p99_latency_ms": 21.559374,
+        "mean_latency_percent": 132.864436,
+        "throughput_percent": 8.95823
+      }
+    },
+    {
+      "name": "tcp-concurrent",
+      "protocol": "tcp",
+      "concurrency": 10,
+      "query_count": 100,
+      "direct": {
+        "requests": 100,
+        "successful": 100,
+        "failed": 0,
+        "timeouts": 0,
+        "duration_ms": 579.918916,
+        "queries_per_second": 172.4379,
+        "latency_ms": {
+          "minimum": 10.477364,
+          "mean": 28.945842,
+          "median": 23.155085,
+          "p95": 51.012372,
+          "p99": 77.737495,
+          "maximum": 84.134217
+        }
+      },
+      "forwarded": {
+        "requests": 100,
+        "successful": 100,
+        "failed": 0,
+        "timeouts": 0,
+        "duration_ms": 581.718857,
+        "queries_per_second": 171.904347,
+        "latency_ms": {
+          "minimum": 36.282699,
+          "mean": 55.612445,
+          "median": 56.713781,
+          "p95": 78.025504,
+          "p99": 80.595917,
+          "maximum": 81.71714
+        }
+      },
+      "overhead": {
+        "mean_latency_ms": 26.666603,
+        "median_latency_ms": 33.558696,
+        "p95_latency_ms": 27.013132,
+        "p99_latency_ms": 2.858422,
+        "mean_latency_percent": 92.12585,
+        "throughput_percent": 0.309417
+      }
+    }
+  ],
+  "resources": {
+    "process": {
+      "cpu_percent_mean": null,
+      "cpu_percent_peak": null,
+      "rss_bytes_mean": null,
+      "rss_bytes_peak": null
+    },
+    "system": {
+      "load_average_1m_before": null,
+      "load_average_1m_peak": null,
+      "temperature_celsius_before": null,
+      "temperature_celsius_peak": null,
+      "throttled_state_before": null,
+      "throttled_state_after": null
+    }
+  },
+  "summary": {
+    "status": "success",
+    "notes": [],
+    "requests_total": 800,
+    "successful_total": 800,
+    "failed_total": 0,
+    "timeouts_total": 0
+  }
+}

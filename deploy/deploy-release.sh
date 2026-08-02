@@ -23,7 +23,9 @@ require_command() {
 }
 
 find_latest_archive() {
-  local archives=(/tmp/homedns-*.tar.gz)
+  local archives=(
+    "${PROJECT_ROOT}"/dns/dist/homedns-*.tar.gz
+  )
 
   [[ -f "${archives[0]}" ]] ||
     fail "release archive was not created"
